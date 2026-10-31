@@ -230,15 +230,92 @@ export class MarketLayout {
   }
 
   /**
+   * Generates a soft, subtle semi-transparent brick pattern overlay on top of the solid wall color.
+   */
+  public static createBrickTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    // 1. Base is the wall's red-brick terracotta color
+    ctx.fillStyle = '#8b3a2b';
+    ctx.fillRect(0, 0, 512, 512);
+
+    const rows = 16;
+    const rowHeight = 512 / rows; // 32px per row
+    const brickWidth = 64;
+    const mortarGap = 2; // subtle thinner mortar
+
+    // Very soft, low-contrast translucent overlays for a subtle brick look
+    for (let r = 0; r < rows; r++) {
+      const y = r * rowHeight + mortarGap / 2;
+      const h = rowHeight - mortarGap;
+      const xOffset = (r % 2 === 0) ? 0 : -(brickWidth / 2);
+
+      for (let x = xOffset - brickWidth; x < 512 + brickWidth; x += brickWidth) {
+        // Very subtle lightness variations (low opacity: 3% to 6%)
+        const hash = Math.abs(Math.sin(r * 31.7 + x * 17.3) * 10000);
+        const rand = hash - Math.floor(hash);
+
+        if (rand > 0.5) {
+          ctx.fillStyle = `rgba(255, 255, 255, ${0.02 + (rand - 0.5) * 0.04})`;
+        } else {
+          ctx.fillStyle = `rgba(0, 0, 0, ${0.03 + rand * 0.04})`;
+        }
+
+        ctx.fillRect(x + mortarGap / 2, y, brickWidth - mortarGap, h);
+      }
+    }
+
+    // 2. Faint, soft mortar lines (low opacity dark lines)
+    ctx.strokeStyle = 'rgba(20, 10, 8, 0.18)';
+    ctx.lineWidth = 1.2;
+
+    // Horizontal mortar lines
+    for (let r = 0; r <= rows; r++) {
+      const y = r * rowHeight;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(512, y);
+      ctx.stroke();
+    }
+
+    // Vertical mortar lines
+    for (let r = 0; r < rows; r++) {
+      const y1 = r * rowHeight;
+      const y2 = y1 + rowHeight;
+      const xOffset = (r % 2 === 0) ? 0 : (brickWidth / 2);
+
+      for (let x = xOffset; x <= 512; x += brickWidth) {
+        ctx.beginPath();
+        ctx.moveTo(x, y1);
+        ctx.lineTo(x, y2);
+        ctx.stroke();
+      }
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(4, 3);
+    return texture;
+  }
+
+  /**
    * Constructs the complete layout group with all stalls, brick walls, and eaves.
    */
   public static buildLayoutGroup(): THREE.Group {
     const root = new THREE.Group();
     root.name = 'custom_market_layout';
 
+    const brickTexture = this.createBrickTexture();
+
     const wallMat = new THREE.MeshStandardMaterial({
-      color: SCENE_COLORS.wallBrickColor,
+      color: 0xffffff, // Tinted by texture map
+      map: brickTexture,
       roughness: 0.85,
+      metalness: 0.05,
     });
 
     const roofTileMat = new THREE.MeshStandardMaterial({
