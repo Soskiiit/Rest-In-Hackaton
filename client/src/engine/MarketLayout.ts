@@ -390,8 +390,8 @@ export class MarketLayout {
 
     const wireMat = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
     const wireRadius = 0.018;
-    // Walls height is 8.5m, roof eave is at 8.5m; anchor wires directly near the top wall edge
-    const wireAnchorHeight = 8.1;
+    // Walls height is 8.5m, roof eave is at 8.5m. Anchor wires exactly at the top edge of walls (8.48m)
+    const wireAnchorHeight = 8.48;
 
     // Helper to create a curved catenary/sagging wire with hanging lanterns
     const addWireWithLanterns = (
