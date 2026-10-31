@@ -1,0 +1,29 @@
+{
+  "units": "meters",
+  "up": "+Y",
+  "forward": "+Z",
+  "origin": "between feet, ground",
+  "rig": "rigid node hierarchy; no skinning",
+  "models": [
+    {
+      "file": "lao_wang.glb",
+      "bytes": 131584,
+      "triangles": 3216,
+      "nodes": 73,
+      "animations": [
+        "Idle",
+        "Wave"
+      ]
+    },
+    {
+      "file": "chef_chen.glb",
+      "bytes": 140340,
+      "triangles": 3472,
+      "nodes": 84,
+      "animations": [
+        "Idle",
+        "Wave"
+      ]
+    }
+  ]
+}
