@@ -38,6 +38,15 @@ export class MarketLayout {
     let typeIdx = 0;
 
     const addStall = (x: number, z: number, rotY: number) => {
+      // Exclude any stalls near the central crossroads walkway (around x=96..106, z=102..107)
+      if (
+        (Math.abs(x - 96.0) < 3.5 && Math.abs(z - 104.5) < 3.5) ||
+        (Math.abs(x - 104.5) < 3.5 && Math.abs(z - 96.0) < 3.5) ||
+        (x >= 92.0 && x <= 108.0 && z >= 93.0 && z <= 107.0)
+      ) {
+        return;
+      }
+
       stalls.push({
         x,
         z,
@@ -125,8 +134,14 @@ export class MarketLayout {
     for (let z = 106; z <= 142; z += 3.6) {
       addStall(118.0, z, Math.PI / 2);
     }
-    // North top row (Z=144, X from 84 to 116, facing South: rotY = Math.PI)
-    for (let x = 85.0; x <= 115.0; x += 3.6) {
+    // North top row (Z=144, facing South: rotY = Math.PI)
+    // Left side stalls along North wall (X from 85.0 to 97.0)
+    for (let x = 85.0; x <= 97.0; x += 3.6) {
+      addStall(x, 144.0, Math.PI);
+    }
+    // Right side stalls along North wall (X from 106.0 to 115.0)
+    // Clears the central walkthrough aisle at x=100..105 so nothing blocks the path
+    for (let x = 106.5; x <= 115.0; x += 3.6) {
       addStall(x, 144.0, Math.PI);
     }
 
