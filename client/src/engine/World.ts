@@ -65,6 +65,7 @@ export class World {
   private hemiLight: THREE.HemisphereLight | null = null;
   private lanternsGroup: THREE.Group = new THREE.Group();
   private chunkStreamer: ChunkStreamer | null = null;
+  private vendorMixers: THREE.AnimationMixer[] = [];
 
   private clock: THREE.Clock = new THREE.Clock();
   private animationFrameId: number | null = null;
@@ -343,83 +344,20 @@ export class World {
   }
 
   /**
-   * Populates stylized human vendor NPCs behind every market stall across all avenues and plazas.
+   * Populates 3D GLB animated vendor NPCs (Chef Chen and Lao Wang) behind market stalls.
    */
   private initMarketNpcs(): void {
     const stalls = MarketLayout.getStalls();
 
-    // Build stylized human vendor avatar geometry (tunic robe, pants, skin, mandarin cap, arms)
-    const geometries: THREE.BufferGeometry[] = [];
-    const materials: THREE.Material[] = [];
-
-    const robeMat = new THREE.MeshStandardMaterial({
-      color: 0x3d5a80, // Traditional Indigo Blue silk robe
-      roughness: 0.6,
-      metalness: 0.1,
-    });
-    const pantsMat = new THREE.MeshStandardMaterial({
-      color: 0x1d2d44, // Dark navy trousers
-      roughness: 0.8,
-    });
-    const skinMat = new THREE.MeshStandardMaterial({
-      color: 0xe0a96d, // Warm skin tone
-      roughness: 0.55,
-    });
-    const capMat = new THREE.MeshStandardMaterial({
-      color: 0x111111, // Mandarin cap
-      roughness: 0.8,
-    });
-
-    // 1. Torso & Upper Robe
-    const torsoGeo = new THREE.CylinderGeometry(0.25, 0.29, 0.60, 12);
-    torsoGeo.translate(0, 1.15, 0);
-    geometries.push(torsoGeo);
-    materials.push(robeMat);
-
-    // 2. Legs / Lower Body
-    const legsGeo = new THREE.CylinderGeometry(0.28, 0.32, 0.85, 12);
-    legsGeo.translate(0, 0.425, 0);
-    geometries.push(legsGeo);
-    materials.push(pantsMat);
-
-    // 3. Head
-    const headGeo = new THREE.SphereGeometry(0.18, 14, 14);
-    headGeo.translate(0, 1.58, 0);
-    geometries.push(headGeo);
-    materials.push(skinMat);
-
-    // 4. Traditional Cap
-    const capGeo = new THREE.SphereGeometry(0.19, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
-    capGeo.translate(0, 1.63, 0);
-    geometries.push(capGeo);
-    materials.push(capMat);
-
-    // 5. Left Arm
-    const armLGeo = new THREE.CylinderGeometry(0.065, 0.065, 0.50, 8);
-    armLGeo.rotateZ(0.22);
-    armLGeo.translate(-0.32, 1.15, 0.08);
-    geometries.push(armLGeo);
-    materials.push(robeMat);
-
-    // 6. Right Arm
-    const armRGeo = new THREE.CylinderGeometry(0.065, 0.065, 0.50, 8);
-    armRGeo.rotateZ(-0.22);
-    armRGeo.translate(0.32, 1.15, 0.08);
-    geometries.push(armRGeo);
-    materials.push(robeMat);
-
-    const mergedGeo = BufferGeometryUtils.mergeGeometries(geometries, true);
-    if (!mergedGeo) return;
-
-    // Filter stalls: spawn human vendor behind every single stall (except central Lao Wang pavilion at 100, 124)
+    // Stalls to populate (excluding the central landmark area)
     const vendorPositions: Array<{ x: number; z: number; rotY: number }> = [];
     for (const stall of stalls) {
-      // Check distance to central Lao Wang pavilion
       const distToLaoWang = Math.hypot(stall.x - 100.0, stall.z - 124.0);
       if (distToLaoWang < 3.5) continue;
 
-      // Position vendor behind the counter facing forwards towards the customer corridor
       const facingAngle = stall.rotY;
+      // Stalls face inward (+Z locally is forward; rotY rotates stall)
+      // Vendors stand behind stall counter (+0.95m behind facing direction) and look forward (+rotY)
       const offsetX = -Math.sin(facingAngle) * 0.95;
       const offsetZ = -Math.cos(facingAngle) * 0.95;
 
@@ -430,27 +368,71 @@ export class World {
       });
     }
 
-    const totalNpcs = vendorPositions.length;
-    const instancedMesh = new THREE.InstancedMesh(
-      mergedGeo,
-      materials,
-      totalNpcs
-    );
-    instancedMesh.receiveShadow = true;
-    instancedMesh.castShadow = true;
+    // Load both GLTF vendor models (Chef Chen and Lao Wang)
+    const loader = new GLTFLoader();
+    const modelUrls = {
+      chef: '/assets/models/chef_chen.glb',
+      lao: '/assets/models/lao_wang.glb',
+    };
 
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < totalNpcs; i++) {
-      const vp = vendorPositions[i];
-      dummy.position.set(vp.x, 0.0, vp.z);
-      dummy.rotation.set(0, vp.rotY, 0);
-      dummy.updateMatrix();
-      instancedMesh.setMatrixAt(i, dummy.matrix);
-    }
+    Promise.all([
+      loader.loadAsync(modelUrls.chef).catch(() => loader.loadAsync('/models/vendors/chef_chen.glb')),
+      loader.loadAsync(modelUrls.lao).catch(() => loader.loadAsync('/models/vendors/lao_wang.glb')),
+    ]).then(([chefGltf, laoGltf]) => {
+      console.log(`[World] Successfully loaded vendor GLB models! Populating ${vendorPositions.length} stalls...`);
 
-    instancedMesh.instanceMatrix.needsUpdate = true;
-    this.scene.add(instancedMesh);
-    console.log(`[World] Successfully populated ${totalNpcs} human vendor NPCs behind every market stall!`);
+      // Spawn Lao Wang at his central antique pavilion stall (100.0, 0, 124.0)
+      const centralLaoWang = laoGltf.scene.clone(true);
+      centralLaoWang.position.set(100.0, 0.0, 123.35); // Behind the counter, facing South (rotY = 0)
+      centralLaoWang.rotation.set(0, 0, 0);
+      centralLaoWang.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+      this.scene.add(centralLaoWang);
+
+      // Setup Idle animation on central Lao Wang
+      if (laoGltf.animations && laoGltf.animations.length > 0) {
+        const mixer = new THREE.AnimationMixer(centralLaoWang);
+        const idleClip = laoGltf.animations.find((a) => a.name === 'Idle') ?? laoGltf.animations[0];
+        mixer.clipAction(idleClip).play();
+        this.vendorMixers.push(mixer);
+      }
+
+      // Populate every stall with Chef Chen and Lao Wang models alternately
+      for (let i = 0; i < vendorPositions.length; i++) {
+        const vp = vendorPositions[i];
+        const isChef = i % 2 === 0;
+        const sourceGltf = isChef ? chefGltf : laoGltf;
+
+        const clone = sourceGltf.scene.clone(true);
+        clone.position.set(vp.x, 0.0, vp.z);
+        // Models face +Z by default; rotate by vp.rotY to face into corridor
+        clone.rotation.set(0, vp.rotY, 0);
+
+        clone.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+        this.scene.add(clone);
+
+        // Play Idle animation with slight random time offset
+        if (sourceGltf.animations && sourceGltf.animations.length > 0) {
+          const mixer = new THREE.AnimationMixer(clone);
+          const idleClip = sourceGltf.animations.find((a) => a.name === 'Idle') ?? sourceGltf.animations[0];
+          const action = mixer.clipAction(idleClip);
+          action.time = Math.random() * 4.0; // Desynchronize animations naturally
+          action.play();
+          this.vendorMixers.push(mixer);
+        }
+      }
+    }).catch((err) => {
+      console.warn('[World] Failed to load vendor GLTF models:', err);
+    });
   }
 
   /**
@@ -513,6 +495,11 @@ export class World {
     // Execute update hooks (PlayerController, OtherPlayerManager, ChunkStreamer)
     for (const listener of this.updateListeners) {
       listener(delta);
+    }
+
+    // Update animated vendor models (Chef Chen & Lao Wang)
+    for (const mixer of this.vendorMixers) {
+      mixer.update(delta);
     }
 
     // Render frame
