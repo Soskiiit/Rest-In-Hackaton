@@ -13,8 +13,8 @@ import { SCENE_COLORS } from './colors';
  *    2. Market stalls: wooden counter, vertical posts, colored cloth canopies.
  *    3. Atmospheric lanterns: glowing spherical bodies with point lights.
  *    4. Props: wooden crates, barrels, ceramic pots, tea sets.
- *    5. Landmark stall in chunk '5_5': Lao Wang's antique stall with pagoda eaves,
- *       signboard, antique teapot (M4 target), and Lao Wang NPC avatar marker (M3 target).
+ * - The single Lao Wang pavilion is built by MarketLayout at the central plaza
+ *   (100, 124), so chunk 5_5 is procedural like every other chunk.
  * - Deep GPU disposal: disposeHierarchy(object) recursively frees geometries,
  *   single/array materials, all attached textures, and unlinks scene graph.
  */
@@ -56,8 +56,6 @@ export interface ChunkData {
   id: string;               // e.g. "5_5"
   cx: number;               // 0..9
   cz: number;               // 0..9
-  isLandmark?: boolean;     // true for 5_5
-  npcId?: string;           // "lao_wang" for 5_5
   stalls?: StallConfig[];
   lanterns?: LanternConfig[];
   props?: PropConfig[];
@@ -263,7 +261,6 @@ export class ChunkBuilder {
   ): THREE.Group {
     const opts: ChunkBuilderOptions = { ...DEFAULT_CHUNK_OPTIONS, ...options };
     const chunkId = data?.id ?? `${cx}_${cz}`;
-    const isLandmark = data?.isLandmark ?? (cx === 5 && cz === 5);
 
     const chunkGroup = new THREE.Group();
     chunkGroup.name = `chunk_${chunkId}`;
@@ -272,30 +269,21 @@ export class ChunkBuilder {
       chunkId,
       cx,
       cz,
-      isLandmark,
-      npcId: isLandmark ? 'lao_wang' : undefined,
     };
 
     // 1. Ground Tile (PlaneGeometry 20x20)
     const groundMesh = this.buildGroundTile(cx, cz, opts);
     chunkGroup.add(groundMesh);
 
-    // 2. Build Stalls, Props, Lanterns, or Landmark
-    if (isLandmark) {
-      // Chunk 5_5 Landmark: Lao Wang's Antique Pavilion & NPC Avatar Marker
-      const landmarkGroup = this.buildLaoWangLandmark(opts, true);
-      chunkGroup.add(landmarkGroup);
-    } else {
-      // Procedural Night Market Generation
-      const seed = (cx * 73856093) ^ (cz * 19349663) ^ 0x9e3779b9;
-      const rng = new SeededRandom(seed);
+    // 2. Procedural Night Market Generation
+    const seed = (cx * 73856093) ^ (cz * 19349663) ^ 0x9e3779b9;
+    const rng = new SeededRandom(seed);
 
-      const stalls = this.generateProceduralStalls(rng, cx, cz, opts);
-      chunkGroup.add(stalls);
+    const stalls = this.generateProceduralStalls(rng, cx, cz, opts);
+    chunkGroup.add(stalls);
 
-      const proceduralProps = this.generateProceduralProps(rng, opts);
-      chunkGroup.add(proceduralProps);
-    }
+    const proceduralProps = this.generateProceduralProps(rng, opts);
+    chunkGroup.add(proceduralProps);
 
     return chunkGroup;
   }
@@ -1042,14 +1030,14 @@ export class ChunkBuilder {
   }
 
   /**
-   * Landmark: Chunk 5_5 Lao Wang Pavilion & Avatar Marker.
-   * Prominent central landmark in the night market.
+   * Landmark: Lao Wang Pavilion & Avatar Marker.
+   * Prominent central landmark in the North Plaza at world (100, 124).
    */
   public static buildLaoWangLandmark(opts: ChunkBuilderOptions = DEFAULT_CHUNK_OPTIONS, includeAvatar: boolean = false): THREE.Group {
     const landmark = new THREE.Group();
     landmark.name = 'lao_wang_landmark';
-    // Positioned in center of chunk (x=10, z=10), facing South towards player spawn (100, 100)
-    landmark.position.set(10, 0, 9.5);
+    // Central pavilion position, facing South towards the player approach.
+    landmark.position.set(100, 0, 124);
 
     // 1. Pavilion Platform (Stone foundation)
     const platformGeo = new THREE.BoxGeometry(5.2, 0.25, 3.6);

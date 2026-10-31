@@ -241,15 +241,15 @@ describe('Adversarial M2: Deep GPU Disposal & 500+ Cycle Stress Harness', () => 
       expect(totalMaterialsTested).toBeGreaterThan(1500);
     });
 
-    it('2.2 should verify comprehensive deep disposal of landmark chunk 5_5 (pagoda, Lao Wang, teapot, jade, lanterns)', () => {
-      const landmarkChunk = ChunkBuilder.buildChunk(5, 5);
-      scene.add(landmarkChunk);
+    it('2.2 should verify comprehensive deep disposal of the central pavilion (pagoda, Lao Wang, teapot, jade, lanterns)', () => {
+      const pavilion = ChunkBuilder.buildLaoWangLandmark(undefined, true);
+      scene.add(pavilion);
 
       const collectedGeos = new Set<THREE.BufferGeometry>();
       const collectedMats = new Set<THREE.Material>();
       const collectedLights: THREE.PointLight[] = [];
 
-      landmarkChunk.traverse((node: any) => {
+      pavilion.traverse((node: any) => {
         if (node.geometry) collectedGeos.add(node.geometry);
         if (node.material) {
           if (Array.isArray(node.material)) {
@@ -263,7 +263,7 @@ describe('Adversarial M2: Deep GPU Disposal & 500+ Cycle Stress Harness', () => 
         }
       });
 
-      // Verify landmark contains all expected specialized models
+      // Verify pavilion contains all expected specialized models
       expect(collectedGeos.size).toBeGreaterThan(10);
       expect(collectedMats.size).toBeGreaterThan(10);
       expect(collectedLights.length).toBe(2); // Two grand imperial lanterns
@@ -271,8 +271,8 @@ describe('Adversarial M2: Deep GPU Disposal & 500+ Cycle Stress Harness', () => 
       const geoSpies = Array.from(collectedGeos).map((g) => vi.spyOn(g, 'dispose'));
       const matSpies = Array.from(collectedMats).map((m) => vi.spyOn(m, 'dispose'));
 
-      // Dispose landmark hierarchy
-      disposeHierarchy(landmarkChunk);
+      // Dispose pavilion hierarchy
+      disposeHierarchy(pavilion);
 
       // Assert 100% disposal
       for (const spy of geoSpies) {
@@ -283,9 +283,9 @@ describe('Adversarial M2: Deep GPU Disposal & 500+ Cycle Stress Harness', () => 
       }
 
       // Assert hierarchy unlinking and scene detachment
-      expect(landmarkChunk.children.length).toBe(0);
-      expect(scene.children.includes(landmarkChunk)).toBe(false);
-      expect(Object.keys(landmarkChunk.userData).length).toBe(0);
+      expect(pavilion.children.length).toBe(0);
+      expect(scene.children.includes(pavilion)).toBe(false);
+      expect(Object.keys(pavilion.userData).length).toBe(0);
     });
 
     it('2.3 should dispose all 13 standard Three.js texture property slots', () => {
@@ -462,11 +462,11 @@ describe('Adversarial M2: Deep GPU Disposal & 500+ Cycle Stress Harness', () => 
       expect(minLightsInAoI).toBeGreaterThanOrEqual(0);
     });
 
-    it('3.2 should assert landmark chunk 5_5 contains exactly 2 PointLights for the imperial lanterns', () => {
-      const chunk5_5 = ChunkBuilder.buildChunk(5, 5);
+    it('3.2 should assert the central pavilion contains exactly 2 PointLights for the imperial lanterns', () => {
+      const pavilion = ChunkBuilder.buildLaoWangLandmark();
       const pointLights: THREE.PointLight[] = [];
 
-      chunk5_5.traverse((node) => {
+      pavilion.traverse((node) => {
         if (node instanceof THREE.PointLight) {
           pointLights.push(node);
         }
@@ -481,7 +481,7 @@ describe('Adversarial M2: Deep GPU Disposal & 500+ Cycle Stress Harness', () => 
         expect(light.distance).toBeGreaterThan(0);
       }
 
-      disposeHierarchy(chunk5_5);
+      disposeHierarchy(pavilion);
     });
 
     it('3.3 should dynamically maintain active PointLights <= 18 under live ChunkStreamer streaming', () => {

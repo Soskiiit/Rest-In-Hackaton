@@ -21,7 +21,7 @@
  *    - After WORD_LEARNED is dispatched, Line 2 dynamically unmasks to 'чайник' and [???] is eliminated
  *    - Unmasking occurs seamlessly without restarting dialogue or clearing choices
  * 5. Teapot Proximity Detection & Modal State Coordination:
- *    - Position at (110.0, 0.9, 108.5) and 3.0m interaction radius
+ *    - Position at the central pavilion (99.2, 0.9, 124.3) and 3.0m interaction radius
  *    - Proximity priority between Lao Wang [F] and Teapot [E]
  *    - Modal lock coordination: pauses movement while quiz is open
  */
@@ -807,7 +807,7 @@ describe('Milestone M4: QuizPanel, TTS & Subtitle Unmasking', () => {
   describe('5. Teapot Proximity Detection & Modal State Coordination', () => {
     it('5.1 should verify TEAPOT_CONFIG coordinates and interaction radius', () => {
       expect(TEAPOT_CONFIG.itemId).toBe('teapot');
-      expect(TEAPOT_CONFIG.worldPosition).toEqual({ x: 110.0, y: 0.9, z: 108.5 });
+      expect(TEAPOT_CONFIG.worldPosition).toEqual({ x: 99.2, y: 0.9, z: 124.3 });
       expect(TEAPOT_CONFIG.interactionRadius).toBe(3.0);
       expect(TEAPOT_CONFIG.interactionRadiusSq).toBe(9.0);
       expect(TEAPOT_CONFIG.promptKey).toBe('E');
@@ -825,36 +825,36 @@ describe('Milestone M4: QuizPanel, TTS & Subtitle Unmasking', () => {
       };
 
       // Exactly at teapot: 0m
-      expect(checkRange(110.0, 108.5)).toBe(true);
+      expect(checkRange(99.2, 124.3)).toBe(true);
 
       // 1.5m away
-      expect(checkRange(110.0, 110.0)).toBe(true);
+      expect(checkRange(99.2, 125.8)).toBe(true);
 
       // Exactly 3.0m away: dx=0, dz=3.0 -> distSq = 9.0 <= 9.0
-      expect(checkRange(110.0, 111.5)).toBe(true);
+      expect(checkRange(99.2, 127.3)).toBe(true);
 
       // 3.5m away: outside range
-      expect(checkRange(110.0, 112.0)).toBe(false);
+      expect(checkRange(99.2, 127.8)).toBe(false);
     });
 
     it('5.3 should resolve priority when player is within range of both Lao Wang (3.5m) and Teapot (3.0m)', () => {
-      expect(LAO_WANG_CONFIG.worldPosition).toEqual({ x: 110.0, y: 0.0, z: 109.5 });
+      expect(LAO_WANG_CONFIG.worldPosition).toEqual({ x: 100.0, y: 0.0, z: 124.0 });
       expect(LAO_WANG_CONFIG.interactionRadius).toBe(3.5);
 
-      // Lao Wang: (110.0, 0, 109.5)
-      // Teapot: (110.0, 0.9, 108.5)
-      // Position A: (110.0, 108.7) -> closer to teapot (dist=0.2m) than Lao Wang (dist=0.8m)
-      const posA = { x: 110.0, z: 108.7 };
+      // Lao Wang: (100.0, 0, 124.0)
+      // Teapot: (99.2, 0.9, 124.3)
+      // Position A: (99.4, 124.3) -> closer to teapot (dist=0.2m) than Lao Wang (dist=0.67m)
+      const posA = { x: 99.4, z: 124.3 };
       const distSqTeaA = (posA.x - TEAPOT_CONFIG.worldPosition.x) ** 2 + (posA.z - TEAPOT_CONFIG.worldPosition.z) ** 2; // 0.04
-      const distSqLaoA = (posA.x - LAO_WANG_CONFIG.worldPosition.x) ** 2 + (posA.z - LAO_WANG_CONFIG.worldPosition.z) ** 2; // 0.64
+      const distSqLaoA = (posA.x - LAO_WANG_CONFIG.worldPosition.x) ** 2 + (posA.z - LAO_WANG_CONFIG.worldPosition.z) ** 2; // 0.45
       expect(distSqTeaA <= TEAPOT_CONFIG.interactionRadiusSq).toBe(true);
       expect(distSqLaoA <= LAO_WANG_CONFIG.interactionRadiusSq).toBe(true);
       expect(distSqTeaA < distSqLaoA).toBe(true); // Teapot prioritized!
 
-      // Position B: (110.0, 109.4) -> closer to Lao Wang (dist=0.1m) than Teapot (dist=0.9m)
-      const posB = { x: 110.0, z: 109.4 };
-      const distSqTeaB = (posB.x - 110.0) ** 2 + (posB.z - 108.5) ** 2; // 0.81
-      const distSqLaoB = (posB.x - 110.0) ** 2 + (posB.z - 109.5) ** 2; // 0.01
+      // Position B: (99.9, 124.1) -> closer to Lao Wang (dist=0.14m) than Teapot (dist=0.73m)
+      const posB = { x: 99.9, z: 124.1 };
+      const distSqTeaB = (posB.x - TEAPOT_CONFIG.worldPosition.x) ** 2 + (posB.z - TEAPOT_CONFIG.worldPosition.z) ** 2; // 0.53
+      const distSqLaoB = (posB.x - LAO_WANG_CONFIG.worldPosition.x) ** 2 + (posB.z - LAO_WANG_CONFIG.worldPosition.z) ** 2; // 0.02
       expect(distSqTeaB < distSqLaoB).toBe(false); // Lao Wang prioritized!
     });
 
