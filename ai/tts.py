@@ -49,6 +49,8 @@ _kokoro_load_attempted = False
 def get_kokoro():
     """Lazy loader for Kokoro ONNX model instance."""
     global _kokoro_instance, _kokoro_load_attempted
+    if os.getenv("MOCK_MODE", "").lower() in ("1", "true", "yes") or os.getenv("TTS_BACKEND") == "formant":
+        return None
     if _kokoro_instance is not None:
         return _kokoro_instance
     if _kokoro_load_attempted:

@@ -112,16 +112,16 @@ export class World {
     this.initLighting();
 
     // 6. Atmospheric night market lanterns
-    this.initMarketLanterns();
+    if (this.isDemoWorld()) this.initMarketLanterns();
 
     // 6.2 Custom Market Layout (Streets, Plazas & Walls matching blueprint)
-    this.initCustomMarketLayout();
+    if (this.isDemoWorld()) this.initCustomMarketLayout();
 
     // 6.3 Animated / Populated NPCs behind market stalls and in plazas
-    this.initMarketNpcs();
+    if (this.isDemoWorld()) this.initMarketNpcs();
 
     // 7. Dynamic Chunk Streamer (10x10 grid, AoI <= 9 chunks)
-    this.initChunkStreamer();
+    if (this.isDemoWorld()) this.initChunkStreamer();
 
     // 8. Window resize event listener
     window.addEventListener('resize', this.onResize);
@@ -151,7 +151,7 @@ export class World {
     this.scene.add(this.gridHelper);
 
     // Load and tile stone pavement tiles from /models/path_straight.glb across the entire 200x200 world
-    this.initStoneTileFloor();
+    if (this.isDemoWorld()) this.initStoneTileFloor();
   }
 
   /**
@@ -456,6 +456,20 @@ export class World {
   /**
    * Initializes the ChunkStreamer engine component.
    */
+  private isDemoWorld(): boolean {
+    const query = new URLSearchParams(window.location.search);
+    return query.get('mock') === 'true' || query.get('demo') === 'true';
+  }
+
+  public enableDemoWorld(): void {
+    if (this.chunkStreamer) return;
+    this.initStoneTileFloor();
+    this.initMarketLanterns();
+    this.initCustomMarketLayout();
+    this.initMarketNpcs();
+    this.initChunkStreamer();
+  }
+
   private initChunkStreamer(): void {
     this.chunkStreamer = new ChunkStreamer(this.scene, {
       chunkSize: 20,

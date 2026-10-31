@@ -4,6 +4,8 @@
  */
 
 import './style.css';
+import { ServerWorld } from './engine/ServerWorld';
+import { OnlinePanel } from './ui/OnlinePanel';
 import { World } from './engine/World';
 import { PlayerController } from './engine/PlayerController';
 import { OtherPlayerManager } from './engine/OtherPlayerManager';
@@ -74,6 +76,14 @@ export const TEAPOT_CONFIG = {
 
 class Application {
   private world!: World;
+  private serverWorld!: ServerWorld;
+  private onlinePanel!: OnlinePanel;
+  private activeTurnId = '';
+  private activeQuizId = '';
+  private activeQuizItem = '';
+  private requestedNpc: string | null = null;
+  private dialoguePending = false;
+
   private playerController!: PlayerController;
   private otherPlayerManager!: OtherPlayerManager;
   private wsClient!: WSClient;
@@ -177,6 +187,8 @@ class Application {
 
     // 1. Initialize 3D World (Scene, Fog, Lighting, 200x200 Ground)
     this.world = new World(container);
+    this.serverWorld = new ServerWorld(this.world.getScene());
+    this.onlinePanel = new OnlinePanel((active) => this.setModalActive(active || this.dialogueUI.isOpen() || this.quizPanel.isOpen()));
 
     // 2. Initialize Player Controller (WASD + Mouse Look)
     this.playerController = new PlayerController(this.world.getCamera(), document.body);
@@ -186,6 +198,22 @@ class Application {
   }
 
   private wireNetworkHandlers(client: WSClient): void {
+    if (!client.isMockMode) this.onlinePanel.bind(client);
+    client.onConnectionChange((state) => { if (state !== 'open') { this.dialoguePending = false; this.requestedNpc = null; } });
+    client.on('CHUNK_LOAD', (p) => this.serverWorld.load(p));
+    client.on('CHUNK_UNLOAD', (p) => this.serverWorld.unload(p.chunk_ids));
+    client.on('WORLD_STATS', (p) => { this.serverWorld.dataPercent = p.data_percent; });
+    client.on('QUIZ', (p) => {
+      this.activeQuizId = p.quiz_id;
+      this.activeQuizItem = p.item_id;
+      this.setModalActive(true);
+      this.quizPanel.open({ itemId: p.item_id, title: 'Осмотр предмета', zh: p.audio_text, py: '', question: 'Как переводится это слово?', options: p.options.map((o: {id: number; ru: string}) => ({ id: o.id, text: o.ru })), wordId: '' });
+    });
+    client.on('QUIZ_RESULT', (p) => { this.activeQuizId = ''; this.quizPanel.showServerResult(p.correct); });
+    client.on('NPC_LEAVE', (p) => { if (this.activeNpcId === p.npc_id) this.dialogueUI.close(); });
+    client.on('DIALOGUE_PENDING', (p) => { if (p.npc_id === this.requestedNpc) this.dialoguePending = true; });
+    client.on('DIALOGUE_DONE', () => { this.dialoguePending = false; });
+
     // 1. Remote Player Movement (Stage 1)
     client.on('PLAYER_MOVE', (payload) => {
       this.otherPlayerManager.updatePlayer(payload);
@@ -214,6 +242,8 @@ class Application {
 
     // 6. Авторизованная сессия: актуальное состояние игрока от сервера
     client.on('WELCOME', (payload: WelcomePayload) => {
+      this.serverWorld.clear();
+      this.otherPlayerManager.clear();
       this.applyPlayerState(payload.player, payload.known_words, true);
     });
 
@@ -240,7 +270,8 @@ class Application {
     });
 
     client.on('ERROR', (payload) => {
-      console.warn('[Main] Server error:', payload?.code ?? payload);
+      this.dialoguePending = false;
+      this.hud.showToast(payload?.code ?? 'Ошибка сервера');
     });
   }
 
@@ -253,6 +284,7 @@ class Application {
       return;
     }
 
+    TTS.useMiddleware('/ai/tts');
     this.authClient = new AuthClient(resolveApiBase(window.location));
     this.authScreen = new AuthScreen(this.authClient);
     this.bindLogout();
@@ -301,10 +333,13 @@ class Application {
   private async connectWithSession(session: AuthSession): Promise<boolean> {
     const authClient = this.authClient!;
     this.wsClient?.disconnect();
+    this.serverWorld.clear();
 
     const client = new WSClient({ url: wsUrlFor(authClient.apiBase, session.token), mock: false });
     this.wsClient = client;
     this.wireNetworkHandlers(client);
+    client.onConnectionChange((state) => this.hud.setWsStatus(state === 'open' ? 'connected' : 'disconnected'));
+    client.on('WELCOME', () => { this.dialogueUI.close(); this.quizPanel.close(); this.activeTurnId = ''; });
     this.applyPlayerState(session.player, session.knownWords, false);
 
     try {
@@ -357,6 +392,8 @@ class Application {
   private setAuthStatus(login: string | null): void {
     const box = document.getElementById('auth-status');
     const name = document.getElementById('auth-status-login');
+    const badge = document.querySelector('#instructions .cyber-badge');
+    if (badge) badge.textContent = login ? 'LAN · ONLINE' : '3D SHOWCASE / DEMO MODE';
     if (!box || !name) return;
     name.textContent = login ?? '';
     box.classList.toggle('hidden', !login);
@@ -374,6 +411,10 @@ class Application {
   }
 
   private activateMockServer(): void {
+    this.serverWorld.clear();
+    this.onlinePanel.hide();
+    this.world.enableDemoWorld();
+    TTS.useMiddleware(null);
     console.log('[Main] Running in standalone MockServer mode.');
     this.wsClient = new WSClient({ mock: true });
     this.wsClient.connect();
@@ -383,6 +424,12 @@ class Application {
   }
 
   private bindInputAndPointerLock(): void {
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !this.isOffline() && !this.isModalActive && this.wsClient?.isConnected) {
+        event.preventDefault();
+        this.onlinePanel.focusChat();
+      }
+    });
     // Clicking instructions blocker engages PointerLock
     this.blockerEl.addEventListener('click', () => {
       if (!this.isModalActive) {
@@ -407,6 +454,7 @@ class Application {
     });
 
     window.addEventListener('beforeunload', () => {
+      this.serverWorld.clear();
       this.wsClient?.disconnect();
       this.mockServer?.stop();
       this.world?.dispose();
@@ -461,7 +509,11 @@ class Application {
    */
   private handleNpcSpeech(payload: NpcSpeechPayload): void {
     console.log(`[Main] NPC speech received from '${payload.npc_id}' (${payload.tokens?.length ?? 0} tokens)`);
+    if (!this.isOffline() && this.requestedNpc !== payload.npc_id && this.activeNpcId !== payload.npc_id) return;
+    this.activeTurnId = payload.turn_id ?? '';
     this.activeNpcId = payload.npc_id;
+    if (!this.isOffline()) TTS.speakZh(payload.tokens.map((token) => token.zh).join(''));
+    if (!this.isOffline()) this.onlinePanel.showOffers(payload.npc_id, payload.offers ?? []);
 
     // 1. Activate UI modal lock (frees mouse pointer, suspends WASD)
     this.setModalActive(true);
@@ -482,6 +534,7 @@ class Application {
    * Choice Selection Callback: Dispatches DIALOGUE packet via wsClient.
    */
   private handleDialogueChoice(choiceId: number): void {
+    if (this.dialoguePending) return;
     const npcId = this.activeNpcId || LAO_WANG_CONFIG.id;
     console.log(`[Main] Dispatching DIALOGUE packet: npc_id='${npcId}', choice_id=${choiceId}`);
 
@@ -489,6 +542,7 @@ class Application {
       this.wsClient.send('DIALOGUE', {
         npc_id: npcId,
         choice_id: choiceId,
+        ...(!this.isOffline() ? { turn_id: this.activeTurnId } : {}),
       });
     }
   }
@@ -500,6 +554,7 @@ class Application {
     console.log('[Main] Dialogue overlay closed. Restoring player movement.');
     this.setModalActive(false);
     this.activeNpcId = null;
+    this.requestedNpc = null;
   }
 
   /**
@@ -527,7 +582,19 @@ class Application {
    * Evaluates distance between player, Lao Wang (110.0, 0.0, 109.5), and Antique Teapot (110.0, 0.9, 108.5).
    * Toggles interaction prompt [F] or [E] without collision.
    */
+  private isOffline(): boolean { return !!this.mockServer || !!this.wsClient?.getMockServer(); }
+
   public checkProximity(pos: { x: number; y: number; z: number }): void {
+    if (!this.isOffline()) {
+      if (this.isModalActive) { this.hideInteractionPrompt(); return; }
+      const npc = this.serverWorld.nearest('npcs', pos.x, pos.z);
+      const item = this.serverWorld.nearest('items', pos.x, pos.z);
+      if (npc) this.showInteractionPrompt('F', `Поговорить: ${npc.id}${item ? ' · E: осмотреть предмет' : ''}`);
+      else if (item) this.showInteractionPrompt('E', `Осмотреть: ${item.id}`);
+      else this.hideInteractionPrompt();
+      return;
+    }
+
     if (
       this.isModalActive ||
       (this.dialogueUI && this.dialogueUI.isOpen()) ||
@@ -612,6 +679,14 @@ class Application {
   }
 
   public handleInteractKey(event?: KeyboardEvent): void {
+    if (!this.isOffline()) {
+      if (this.isModalActive || this.dialoguePending) return;
+      const pos = this.playerController.getPosition();
+      const npc = this.serverWorld.nearest('npcs', pos.x, pos.z);
+      if (npc) { event?.preventDefault(); this.requestedNpc = npc.id; this.wsClient.send('DIALOGUE', { npc_id: npc.id }); }
+      return;
+    }
+
     if (
       this.isModalActive ||
       (this.dialogueUI && this.dialogueUI.isOpen()) ||
@@ -641,6 +716,14 @@ class Application {
   }
 
   public handleTeapotKey(event?: KeyboardEvent): void {
+    if (!this.isOffline()) {
+      if (this.isModalActive) return;
+      const pos = this.playerController.getPosition();
+      const item = this.serverWorld.nearest('items', pos.x, pos.z);
+      if (item) { event?.preventDefault(); this.wsClient.send('INSPECT', { item_id: item.id }); }
+      return;
+    }
+
     if (
       this.isModalActive ||
       (this.dialogueUI && this.dialogueUI.isOpen()) ||
@@ -690,9 +773,9 @@ class Application {
 
     // 3. Live WebSocket server
     if (this.wsClient && this.wsClient.isConnected) {
+      this.requestedNpc = LAO_WANG_CONFIG.id;
       this.wsClient.send('DIALOGUE', {
         npc_id: LAO_WANG_CONFIG.id,
-        choice_id: 0,
       });
       return;
     }
@@ -705,6 +788,8 @@ class Application {
    * Opens Antique Teapot inspection quiz overlay via [E] interaction.
    */
   public triggerTeapotInspection(): void {
+    if (!this.isOffline()) { this.wsClient.send('INSPECT', { item_id: TEAPOT_CONFIG.itemId }); return; }
+
     console.log('[Main] Opening Antique Teapot Quiz via [E] interaction.');
 
     this.setModalActive(true);
@@ -730,6 +815,11 @@ class Application {
   }
 
   private handleQuizAnswer(optionId: number, wordId: string): void {
+    if (!this.isOffline()) {
+      if (this.activeQuizId) this.wsClient.send('INSPECT', { item_id: this.activeQuizItem, answer_id: optionId, quiz_id: this.activeQuizId });
+      return;
+    }
+
     console.log(`[Main] Quiz answer submitted: optionId=${optionId}, wordId=${wordId}`);
 
     if (this.wsClient && this.wsClient.isConnected) {
@@ -839,8 +929,8 @@ class Application {
     this.transmitPositionIfNeeded(delta);
 
     // 6. Update Real-Time HUD Overlay Every Frame
-    const cachePercent = this.world.getCachePercentage?.() ?? 9;
-    const chunkCount = this.world.getLoadedChunksCount?.() ?? this.world.getLoadedChunkCount?.() ?? 9;
+    const cachePercent = this.isOffline() ? this.world.getCachePercentage() : this.serverWorld.dataPercent;
+    const chunkCount = this.isOffline() ? this.world.getLoadedChunksCount() : this.serverWorld.count;
 
     this.hud.update(
       this.currentFps,

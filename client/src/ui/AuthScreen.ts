@@ -126,6 +126,7 @@ export class AuthScreen {
 
     // Клавиши не должны доходить до игры, пока открыт экран входа.
     this.overlay.addEventListener('keydown', (event) => event.stopPropagation());
+    this.overlay.addEventListener('click', (event) => event.stopPropagation());
 
     parent.appendChild(this.overlay);
     this.setMode('login');

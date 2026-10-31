@@ -1039,3 +1039,14 @@ html, body {
     grid-template-columns: 1fr;
   }
 }
+.online-panel { position:fixed; left:16px; bottom:16px; z-index:90; width:min(360px,calc(100vw - 32px)); padding:14px; color:#f9e8ce; background:rgba(15,20,27,.92); border:1px solid #88613a; border-radius:12px; font:14px sans-serif; }
+.online-panel[hidden], .online-panel form[hidden] { display:none; }
+.online-panel form { display:flex; gap:6px; margin:8px 0; }
+.online-panel input { min-width:0; width:100%; color:#fff; background:#222b35; border:1px solid #765b40; border-radius:5px; padding:7px; }
+.online-panel button { color:#f9e8ce; background:#723529; border:1px solid #b27845; border-radius:5px; padding:7px; cursor:pointer; }
+.online-panel > div { max-height:110px; overflow:auto; margin-top:6px; overflow-wrap:anywhere; }
+.online-panel { top:100px; bottom:auto; max-height:30vh; overflow-y:auto; }
+@media (max-width:600px) {
+  .online-panel { top:130px; max-height:25vh; font-size:12px; padding:9px; }
+  .dialogue-overlay { max-height:50vh; overflow-y:auto; bottom:12px; }
+}

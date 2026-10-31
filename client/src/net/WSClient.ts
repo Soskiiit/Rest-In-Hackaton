@@ -374,9 +374,8 @@ export class WSClient {
 
   private scheduleReconnect(): void {
     if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
-      console.warn('[WSClient] Max reconnect attempts reached. Switching to offline mock fallback.');
-      this.isMock = true;
-      this.initMockServer();
+      console.warn('[WSClient] Max reconnect attempts reached. Please sign in again.');
+      this.setConnectionState('closed');
       return;
     }
 

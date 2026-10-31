@@ -448,7 +448,7 @@ def sanitize_speech_tokens(npc_id: str, raw_tokens: Any) -> List[SpeechToken]:
 
     # 5. Enforce Go server upper bound (len <= 64)
     tokens = tokens[:64]
-    return tokens
+    return tokens[:64]
 
 
 def clamp_and_validate_response(
