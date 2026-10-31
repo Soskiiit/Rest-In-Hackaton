@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ChunkStreamer } from './ChunkStreamer';
 import { SCENE_COLORS } from './colors';
+import { MarketLayout } from './MarketLayout';
 
 /**
  * World configuration parameters.
@@ -56,6 +59,7 @@ export class World {
   public readonly config: WorldConfig;
 
   private floorMesh: THREE.Mesh | null = null;
+  private stoneTileFloor: THREE.InstancedMesh | null = null;
   private gridHelper: THREE.GridHelper | null = null;
   private dirLight: THREE.DirectionalLight | null = null;
   private ambientLight: THREE.AmbientLight | null = null;
@@ -114,6 +118,9 @@ export class World {
     // 6.1 Custom Arch model at street entrance
     this.initArchModel();
 
+    // 6.2 Custom Market Layout (Streets, Plazas & Walls matching blueprint)
+    this.initCustomMarketLayout();
+
     // 7. Dynamic Chunk Streamer (10x10 grid, AoI <= 9 chunks)
     this.initChunkStreamer();
 
@@ -143,6 +150,92 @@ export class World {
     this.gridHelper = new THREE.GridHelper(this.config.floorSize, 10, SCENE_COLORS.floorGridLine1, SCENE_COLORS.floorGridLine2);
     this.gridHelper.position.set(halfSize, 0.02, halfSize);
     this.scene.add(this.gridHelper);
+
+    // Load and tile stone pavement tiles from /models/path_straight.glb across the entire 200x200 world
+    this.initStoneTileFloor();
+  }
+
+  /**
+   * Loads the stone pavement tile model and instantiates it seamlessly across the entire 200x200 floor.
+   */
+  private initStoneTileFloor(): void {
+    const loader = new GLTFLoader();
+    loader.load(
+      '/models/path_straight.glb',
+      (gltf) => {
+        gltf.scene.updateMatrixWorld(true);
+        const geometries: THREE.BufferGeometry[] = [];
+        const materials: THREE.Material[] = [];
+
+        gltf.scene.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            const clonedGeo = child.geometry.clone();
+            clonedGeo.applyMatrix4(child.matrixWorld);
+            geometries.push(clonedGeo);
+
+            const srcMats = Array.isArray(child.material) ? child.material : [child.material];
+            for (const mat of srcMats) {
+              if (mat) {
+                const clonedMat = mat.clone() as THREE.MeshStandardMaterial;
+                // Tint to a lighter grey based on material name or order
+                if (mat.name === 'Stone_Light') {
+                  clonedMat.color.setHex(SCENE_COLORS.stoneTileLightColor);
+                } else if (mat.name === 'Stone_Dark') {
+                  clonedMat.color.setHex(SCENE_COLORS.stoneTileDarkColor);
+                } else {
+                  clonedMat.color.setHex(SCENE_COLORS.stoneTileLightColor);
+                }
+                clonedMat.roughness = 0.85;
+                materials.push(clonedMat);
+              }
+            }
+          }
+        });
+
+        if (geometries.length === 0) return;
+
+        const mergedGeo = BufferGeometryUtils.mergeGeometries(geometries, true);
+        if (!mergedGeo) return;
+
+        // Scale tile geometry so each unit is exactly 2.0 x 2.0 meters
+        mergedGeo.scale(4.03, 1.0, 2.045);
+
+        // 100 x 100 grid spanning [0, 200] in X and Z
+        const countX = 100;
+        const countZ = 100;
+        const totalInstances = countX * countZ;
+
+        const instancedMesh = new THREE.InstancedMesh(
+          mergedGeo,
+          materials.length === 1 ? materials[0] : materials,
+          totalInstances
+        );
+        instancedMesh.receiveShadow = true;
+        instancedMesh.castShadow = false;
+
+        const dummy = new THREE.Object3D();
+        let idx = 0;
+
+        for (let ix = 0; ix < countX; ix++) {
+          const posX = ix * 2 + 1; // centered in 2m grid: 1, 3, 5, ..., 199
+          for (let iz = 0; iz < countZ; iz++) {
+            const posZ = iz * 2 + 1;
+            dummy.position.set(posX, 0.015, posZ);
+            dummy.updateMatrix();
+            instancedMesh.setMatrixAt(idx++, dummy.matrix);
+          }
+        }
+
+        instancedMesh.instanceMatrix.needsUpdate = true;
+        this.stoneTileFloor = instancedMesh;
+        this.scene.add(this.stoneTileFloor);
+        console.log('[World] Stone tile pavement floor generated across 200x200 world (10,000 instances).');
+      },
+      undefined,
+      (err) => {
+        console.warn('[World] Could not load stone tile model /models/path_straight.glb:', err);
+      }
+    );
   }
 
   /**
@@ -252,9 +345,8 @@ export class World {
         const scale = maxDim > 0 ? 5.5 / maxDim : 4.0;
         obj.scale.set(scale, scale, scale);
 
-        // Position over the central street right ahead of player spawn
-        const halfSize = this.config.floorSize / 2;
-        obj.position.set(halfSize, 0, halfSize + 8);
+        // Position over the entrance avenue right at the beginning of the street
+        obj.position.set(100, 0, 64);
         obj.rotation.y = 0;
 
         obj.traverse((child) => {
@@ -279,6 +371,15 @@ export class World {
         console.warn('[World] Could not load /models/arch.obj:', err);
       }
     );
+  }
+
+  /**
+   * Initializes the custom market layout matching the user blueprint:
+   * Stalls in corridors and plazas with solid brick walls directly behind their backs.
+   */
+  private initCustomMarketLayout(): void {
+    const layoutGroup = MarketLayout.buildLayoutGroup();
+    this.scene.add(layoutGroup);
   }
 
   /**
