@@ -28,6 +28,7 @@ type Reply struct {
 	AggroDelta  int      `json:"aggro_delta"`
 	State       string   `json:"fsm_state"`
 	Choices     []Choice `json:"choices"`
+	AudioBase64 string   `json:"audio_base64,omitempty"`
 }
 type AI struct {
 	URL     string
@@ -62,28 +63,31 @@ func (a *AI) RequestScene(ctx context.Context, r db.Relation, text string, scene
 	if res.StatusCode != 200 {
 		return Reply{}, fmt.Errorf("AI HTTP %d", res.StatusCode)
 	}
-	b, err := io.ReadAll(io.LimitReader(res.Body, 65537))
+	const maxAIResponseSize = 2 * 1024 * 1024 // 2 MiB
+	b, err := io.ReadAll(io.LimitReader(res.Body, maxAIResponseSize+1))
 	if err != nil {
 		return Reply{}, err
 	}
-	if len(b) > 65536 {
+	if len(b) > maxAIResponseSize {
 		return Reply{}, fmt.Errorf("AI response too large")
 	}
 	var envelope struct {
-		Parsed json.RawMessage `json:"parsed"`
+		Parsed      json.RawMessage `json:"parsed"`
+		AudioBase64 *string         `json:"audio_base64"`
 	}
 	if err = json.Unmarshal(b, &envelope); err != nil {
 		return Reply{}, err
 	}
 	// Pointers distinguish valid zero deltas from missing model fields.
 	var fields struct {
-		Tokens  *[]Token  `json:"speech_tokens"`
-		Emotion *string   `json:"emotion"`
-		Price   *int      `json:"price_new"`
-		Mianzi  *int      `json:"mianzi_delta"`
-		Aggro   *int      `json:"aggro_delta"`
-		State   *string   `json:"fsm_state"`
-		Choices *[]Choice `json:"choices"`
+		Tokens      *[]Token  `json:"speech_tokens"`
+		Emotion     *string   `json:"emotion"`
+		Price       *int      `json:"price_new"`
+		Mianzi      *int      `json:"mianzi_delta"`
+		Aggro       *int      `json:"aggro_delta"`
+		State       *string   `json:"fsm_state"`
+		Choices     *[]Choice `json:"choices"`
+		AudioBase64 *string   `json:"audio_base64"`
 	}
 	if err = json.Unmarshal(envelope.Parsed, &fields); err != nil {
 		return Reply{}, err
@@ -91,7 +95,22 @@ func (a *AI) RequestScene(ctx context.Context, r db.Relation, text string, scene
 	if fields.Tokens == nil || fields.Emotion == nil || fields.Price == nil || fields.Mianzi == nil || fields.Aggro == nil || fields.State == nil || fields.Choices == nil {
 		return Reply{}, fmt.Errorf("missing AI fields")
 	}
-	reply := Reply{*fields.Tokens, *fields.Emotion, *fields.Price, *fields.Mianzi, *fields.Aggro, *fields.State, *fields.Choices}
+	audio := ""
+	if fields.AudioBase64 != nil {
+		audio = *fields.AudioBase64
+	} else if envelope.AudioBase64 != nil {
+		audio = *envelope.AudioBase64
+	}
+	reply := Reply{
+		Tokens:      *fields.Tokens,
+		Emotion:     *fields.Emotion,
+		Price:       *fields.Price,
+		MianziDelta: *fields.Mianzi,
+		AggroDelta:  *fields.Aggro,
+		State:       *fields.State,
+		Choices:     *fields.Choices,
+		AudioBase64: audio,
+	}
 	if err = a.validate(reply, r); err != nil {
 		return Reply{}, err
 	}

@@ -553,7 +553,7 @@ def synthesize_wav(
     Returns (wav_bytes, duration_seconds).
     """
     # Priority 0: Kokoro Neural Synthesis (if available and not forced to formant)
-    if os.environ.get("TTS_ENGINE", "kokoro").lower() != "formant":
+    if os.environ.get("TTS_ENGINE", "formant").lower() != "formant":
         synth_text = text
         if not synth_text and tokens:
             zh_parts = []

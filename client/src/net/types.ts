@@ -91,6 +91,7 @@ export interface NpcSpeechPayload {
   mianzi: number;  // Respect meter: 0..100
   aggro: number;   // Aggro / Rage meter: 0..100
   price?: number;
+  audio_base64?: string; // Base64-encoded WAV audio from AI TTS
 }
 
 export interface NpcStatePayload {

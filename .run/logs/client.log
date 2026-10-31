@@ -1,0 +1,10 @@
+npm notice run rest-in-hackaton-client@0.1.0 dev
+npm notice run vite --host
+
+  VITE v5.4.21  ready in 111 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: http://10.18.203.82:5173/
+  ➜  Network: http://172.18.0.1:5173/
+  ➜  Network: http://10.8.1.1:5173/
+  ➜  Network: http://172.20.0.1:5173/

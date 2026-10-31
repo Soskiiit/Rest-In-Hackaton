@@ -455,6 +455,7 @@ class Application {
 
   /**
    * Inbound NPC Speech packet handler. Opens or updates DialogueUI and engages modal lock.
+   * Also plays TTS audio if audio_base64 is present in payload.
    */
   private handleNpcSpeech(payload: NpcSpeechPayload): void {
     console.log(`[Main] NPC speech received from '${payload.npc_id}' (${payload.tokens?.length ?? 0} tokens)`);
@@ -466,7 +467,24 @@ class Application {
     // 2. Hide proximity prompt
     this.hideInteractionPrompt();
 
-    // 3. Open DialogueUI
+    // 3. Play TTS audio from AI service (Base64 WAV)
+    if (payload.audio_base64) {
+      try {
+        const binary = atob(payload.audio_base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.onended = () => URL.revokeObjectURL(url);
+        audio.play().catch((err) => console.warn('[Main] TTS audio play failed:', err));
+        console.log(`[Main] Playing TTS audio (${bytes.length} bytes) for NPC '${payload.npc_id}'`);
+      } catch (err) {
+        console.warn('[Main] Failed to decode/play TTS audio:', err);
+      }
+    }
+
+    // 4. Open DialogueUI
     this.dialogueUI.open(
       payload,
       (choiceId: number) => this.handleDialogueChoice(choiceId),
