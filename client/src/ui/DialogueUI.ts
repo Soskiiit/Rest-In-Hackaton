@@ -358,10 +358,14 @@ export class DialogueUI implements IDialogueUI {
       const textSpan = doc.createElement('span');
       textSpan.className = 'choice-text';
 
-      if (choice.text_ru && choice.text_zh) {
-        textSpan.textContent = `${choice.text_zh} (${choice.text_ru})`;
+      // Server sends {zh,py,ru}; MockServer/fixtures use {text_zh,text_ru}.
+      const zh = choice.zh ?? choice.text_zh ?? '';
+      const ru = choice.ru ?? choice.text_ru ?? '';
+
+      if (zh && ru) {
+        textSpan.textContent = `${zh} (${ru})`;
       } else {
-        textSpan.textContent = choice.text_zh || choice.text_ru || '';
+        textSpan.textContent = zh || ru;
       }
 
       btn.appendChild(numBadge);

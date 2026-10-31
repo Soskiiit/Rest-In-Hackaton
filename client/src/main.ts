@@ -683,11 +683,14 @@ class Application {
       return;
     }
 
-    // 3. Live WebSocket server
+    // 3. Live WebSocket server.
+    // Start/reopen the dialogue without choice_id: the server generates (or
+    // resends) the current turn and returns it together with a fresh turn_id.
+    // Sending choice_id here would be treated as a choice submission and
+    // rejected with STALE_CHOICE because no turn has been issued yet.
     if (this.wsClient && this.wsClient.isConnected) {
       this.wsClient.send('DIALOGUE', {
         npc_id: LAO_WANG_CONFIG.id,
-        choice_id: 0,
       });
       return;
     }

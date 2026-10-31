@@ -40,7 +40,9 @@ export interface MovePayload {
 
 export interface DialoguePayload {
   npc_id: string;
-  choice_id: number;
+  // Omitted when starting/reopening a dialogue: the server then generates or
+  // resends the current turn. Must be paired with turn_id when choosing.
+  choice_id?: number;
   turn_id?: string;
 }
 
@@ -78,10 +80,15 @@ export interface Token {
 
 export interface Choice {
   id: number;
-  text_zh: string;
-  text_ru: string;
+  // Server shape (see server/internal/game Choice).
+  zh?: string;
+  py?: string;
+  ru?: string;
+  // Legacy/mock shape kept for MockServer and fixtures.
+  text_zh?: string;
+  text_ru?: string;
   text_py?: string;
-  type?: 'polite' | 'haggle' | 'provoke' | 'leave';
+  type?: 'polite' | 'haggle' | 'provoke' | 'leave' | 'bluff' | 'order' | 'documents' | 'bribe' | 'directions';
 }
 
 export interface NpcSpeechPayload {

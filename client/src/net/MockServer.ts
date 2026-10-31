@@ -167,8 +167,15 @@ export class MockServer {
     this.emit('NPC_SPEECH', greeting);
   }
 
-  private handleDialogue(payload: { npc_id: string; choice_id: number }): void {
+  private handleDialogue(payload: { npc_id: string; choice_id?: number }): void {
     const choiceId = payload?.choice_id;
+
+    // No choice_id means "start/reopen dialogue": mirror the real server and
+    // (re)send the current greeting turn.
+    if (choiceId === undefined) {
+      this.triggerLaoWangGreeting();
+      return;
+    }
 
     if (choiceId === 1) {
       // Polite Haggling -> Mianzi +10, Aggro -10

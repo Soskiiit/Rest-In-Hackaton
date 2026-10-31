@@ -532,6 +532,25 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
       expect(buttons[3].textContent).toContain('对不起，再看看。');
     });
 
+    it('1.10b should render choices in the real server shape ({zh,py,ru})', () => {
+      const dialogue = new DialogueUI(fixture.doc as any);
+      dialogue.open({
+        ...MOCK_SPEECH_GREETING,
+        choices: [
+          { id: 1, zh: '谢谢老板！', py: 'Xièxie lǎobǎn!', ru: 'Спасибо, босс!', type: 'polite' },
+          { id: 4, zh: '我再看看', py: 'Wǒ zài kànkan', ru: 'Я еще посмотрю', type: 'leave' },
+        ],
+      });
+
+      const buttons = fixture.choices.children;
+      expect(buttons).toHaveLength(2);
+      expect(buttons[0].textContent).toContain('[1]');
+      expect(buttons[0].textContent).toContain('谢谢老板！');
+      expect(buttons[0].textContent).toContain('Спасибо, босс!');
+      expect(buttons[1].textContent).toContain('我再看看');
+      expect(buttons[1].textContent).toContain('Я еще посмотрю');
+    });
+
     it('1.11 should invoke onChoice callback when a choice button is clicked', () => {
       const dialogue = new DialogueUI(fixture.doc as any);
       const onChoice = vi.fn();
