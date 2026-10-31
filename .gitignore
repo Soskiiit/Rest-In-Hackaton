@@ -4,3 +4,5 @@ npm_packages/
 .venv/
 venv/
 .agents/
+__pycache__/
+*.pyc
