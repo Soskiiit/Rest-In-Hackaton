@@ -18,8 +18,6 @@ EmotionType = Literal[
     "angry",
     "happy",
     "suspicious",
-    "flattered",
-    "surprised",
 ]
 
 FsmStateType = Literal[
@@ -29,9 +27,6 @@ FsmStateType = Literal[
     "FLATTERED",
     "SUSPICIOUS",
     "AGGRO",
-    "TALKING",
-    "PATROL",
-    "DEAL_AGREED",
 ]
 
 ChoiceType = Literal[
@@ -39,15 +34,19 @@ ChoiceType = Literal[
     "haggle",
     "provoke",
     "leave",
-    "brave",
-    "weak",
+    "bluff",
+    "order",
+    "documents",
     "bribe",
-    "neutral",
+    "directions",
 ]
 
 NpcIdType = Literal[
     "lao_wang",
+    "auntie_li",
+    "electronics_zhang",
     "chef_chen",
+    "granny_liu",
     "guard_zhang",
 ]
 
@@ -122,6 +121,8 @@ class DialogueContext(BaseModel):
     mianzi: int = Field(default=50, ge=0, le=100, description="Respect/Face 0..100")
     aggro: int = Field(default=0, ge=0, le=100, description="Rage/Aggro 0..100")
     history: Any = Field(default="[]", description="Dialogue history (string or list of turns)")
+    scene_history: Optional[Any] = Field(default=None, description="Multiplayer scene history sent by Go server")
+    npc_kind: Optional[str] = Field(default=None, description="NPC kind (merchant, chef, guard)")
 
     @field_validator("price", "price_floor", mode="before")
     @classmethod
@@ -155,7 +156,11 @@ class DialogueRequest(BaseModel):
     """
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
-    npc_id: str = Field(..., min_length=1, description="NPC ID: lao_wang, chef_chen, guard_zhang")
+    npc_id: str = Field(
+        ...,
+        min_length=1,
+        description="NPC ID: lao_wang, auntie_li, electronics_zhang, chef_chen, granny_liu, guard_zhang",
+    )
     player_message: str = Field(..., min_length=1, description="Message from player or selected choice text")
     context: Optional[DialogueContext] = Field(default_factory=DialogueContext, description="State variables")
 
@@ -201,13 +206,24 @@ class DialogueResponse(BaseModel):
         default="neutral", description="Emotional state for 3D character mesh animation"
     )
     price_new: int = Field(
-        ..., ge=0, description="Updated price after dialogue exchange"
+        ...,
+        ge=0,
+        le=100000,
+        description="Updated price after dialogue exchange strictly in [0, 100000]",
     )
+
+    @field_validator("price_new", mode="before")
+    @classmethod
+    def clamp_price_new(cls, v: Any) -> int:
+        try:
+            return max(0, min(100000, int(v)))
+        except (ValueError, TypeError):
+            return 0
     mianzi_delta: int = Field(
-        default=0, ge=-100, le=100, description="Delta applied to player's Face/Mianzi"
+        default=0, ge=-30, le=30, description="Delta applied to player's Face/Mianzi strictly in [-30, 30]"
     )
     aggro_delta: int = Field(
-        default=0, ge=-100, le=100, description="Delta applied to NPC's Rage/Aggro"
+        default=0, ge=-30, le=30, description="Delta applied to NPC's Rage/Aggro strictly in [-30, 30]"
     )
     fsm_state: FsmStateType = Field(
         default="HAGGLING", description="Current FSM state"
@@ -271,3 +287,71 @@ class HealthResponse(BaseModel):
     )
     llama_server: Optional[str] = Field(default=None, description="Status string: connected/disconnected")
     mock_mode: Optional[bool] = Field(default=None, description="Whether mock mode is active")
+
+
+# ============================================================================
+# TTS Models (Stage 6 R2)
+# ============================================================================
+
+class TTSRequest(BaseModel):
+    """
+    Incoming request payload for POST /tts.
+    Accepts raw text or structured speech tokens, with optional speed/pitch/speaker overrides.
+    """
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    text: Optional[str] = Field(
+        default=None, description="Text in Hanzi or Pinyin to synthesize"
+    )
+    tokens: Optional[List[Union[SpeechToken, Dict[str, Any]]]] = Field(
+        default=None, description="List of speech tokens with 'zh' and/or 'py' fields"
+    )
+    lang: Literal["zh-CN", "zh", "cmn", "en"] = Field(
+        default="zh-CN", description="Language code (default zh-CN)"
+    )
+    format: Literal["wav", "json", "base64"] = Field(
+        default="wav", description="Output format: 'wav' (binary stream) or 'json'/'base64' (JSON payload)"
+    )
+    speed: float = Field(
+        default=1.0, ge=0.5, le=2.0, description="Speed multiplier (0.5 slow, 2.0 fast)"
+    )
+    pitch: float = Field(
+        default=1.0, ge=0.5, le=2.0, description="Pitch frequency multiplier (0.5 low, 2.0 high)"
+    )
+    speaker: Optional[Union[NpcIdType, str]] = Field(
+        default=None,
+        description="NPC speaker preset (lao_wang, auntie_li, electronics_zhang, chef_chen, granny_liu, guard_zhang)",
+    )
+
+    @field_validator("speed", "pitch", mode="before")
+    @classmethod
+    def clamp_multiplier(cls, v: Any) -> float:
+        try:
+            fv = float(v)
+            return max(0.5, min(2.0, fv))
+        except (ValueError, TypeError):
+            return 1.0
+
+    @model_validator(mode="after")
+    def validate_content_presence(self) -> "TTSRequest":
+        has_text = self.text is not None and bool(self.text.strip())
+        has_tokens = bool(self.tokens)
+        if not has_text and not has_tokens:
+            raise ValueError("TTSRequest must provide either non-empty 'text' or non-empty 'tokens'")
+        return self
+
+
+class TTSResponse(BaseModel):
+    """
+    Structured JSON response schema returned when format='json' or format='base64'.
+    """
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    status: str = Field(default="ok", description="Synthesis status")
+    format: Literal["wav"] = Field(default="wav", description="Audio format")
+    sample_rate: int = Field(default=16000, description="Audio sample rate in Hz")
+    channels: int = Field(default=1, description="Audio channels (1=mono)")
+    duration_sec: float = Field(..., ge=0.0, description="Audio duration in seconds")
+    audio_base64: str = Field(..., description="Base64-encoded RIFF WAV audio data")
+    text: str = Field(default="", description="Text representation synthesized")
+
