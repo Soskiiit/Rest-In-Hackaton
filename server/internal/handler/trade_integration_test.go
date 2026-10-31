@@ -66,6 +66,10 @@ func pair(t *testing.T, f *harness) (*websocket.Conn, *websocket.Conn, string, s
 	until(t, b, "WORLD_STATS")
 	until(t, a, "PLAYER_JOIN")
 	until(t, b, "PLAYER_JOIN")
+	move(t, a, 100, 124, 0)
+	move(t, b, 101, 124, 0)
+	until(t, a, "PLAYER_MOVE")
+	until(t, b, "PLAYER_MOVE")
 	return a, b, ta, tb
 }
 func TestWSTradeRaceReplayReconnectAndRestart(t *testing.T) {
@@ -185,7 +189,7 @@ func TestWSTradeRaceReplayReconnectAndRestart(t *testing.T) {
 func TestNPCSpatialRecipientsAndInteractionRadius(t *testing.T) {
 	f := start(t, testdb.New(t), "http://127.0.0.1:1")
 	a, b, _, _ := pair(t, f)
-	send(t, b, "MOVE", map[string]any{"x": 120, "z": 110, "rotation": 0})
+	move(t, b, 110, 124, 0)
 	until(t, a, "PLAYER_MOVE")
 	send(t, a, "DIALOGUE", map[string]any{"npc_id": "lao_wang"})
 	sa, sb := speech(t, a), speech(t, b)
@@ -194,7 +198,7 @@ func TestNPCSpatialRecipientsAndInteractionRadius(t *testing.T) {
 	}
 	send(t, b, "DIALOGUE", map[string]any{"npc_id": "lao_wang"})
 	errorCode(t, b, "NPC_OUT_OF_RANGE")
-	send(t, b, "MOVE", map[string]any{"x": 126, "z": 110, "rotation": 0})
+	move(t, b, 116, 124, 0)
 	until(t, b, "NPC_LEAVE")
 	send(t, a, "DIALOGUE", map[string]any{"npc_id": "lao_wang", "choice_id": 1, "turn_id": sa.TurnID})
 	speech(t, a)
@@ -212,7 +216,7 @@ func TestNPCSpatialRecipientsAndInteractionRadius(t *testing.T) {
 			break
 		}
 	}
-	send(t, b, "MOVE", map[string]any{"x": 111, "z": 110, "rotation": 0})
+	move(t, b, 104, 124, 0)
 	returned := speech(t, b)
 	if returned.TurnID == "" || len(returned.Choices) != 4 {
 		t.Fatal("returning participant did not receive active turn")
@@ -274,6 +278,7 @@ func TestSlowAIUsesFallbackWithinClientTimeout(t *testing.T) {
 	c := dial(t, f, account(t, f, "alice", "business"))
 	until(t, c, "WELCOME")
 	until(t, c, "WORLD_STATS")
+	move(t, c, 100, 124, 0)
 	send(t, c, "DIALOGUE", map[string]any{"npc_id": "lao_wang"})
 	s := speech(t, c)
 	if !s.Fallback || len(s.Choices) != 4 {
