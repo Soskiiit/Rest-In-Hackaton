@@ -41,6 +41,7 @@ export interface MovePayload {
 export interface DialoguePayload {
   npc_id: string;
   choice_id: number;
+  turn_id?: string;
 }
 
 export interface InspectPayload {
@@ -92,6 +93,7 @@ export interface NpcSpeechPayload {
   aggro: number;   // Aggro / Rage meter: 0..100
   price?: number;
   audio_base64?: string; // Base64-encoded WAV audio from AI TTS
+  turn_id?: string;      // Turn token for STALE_CHOICE guard
 }
 
 export interface NpcStatePayload {

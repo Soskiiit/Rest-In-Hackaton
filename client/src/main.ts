@@ -110,6 +110,7 @@ class Application {
   private isNearLaoWang = false;
   private isNearTeapot = false;
   private activeNpcId: string | null = null;
+  private activeTurnId: string | null = null;
 
   public async init(): Promise<void> {
     console.log('[Main] Initializing Rest-In-Hackaton Client...');
@@ -460,6 +461,7 @@ class Application {
   private handleNpcSpeech(payload: NpcSpeechPayload): void {
     console.log(`[Main] NPC speech received from '${payload.npc_id}' (${payload.tokens?.length ?? 0} tokens)`);
     this.activeNpcId = payload.npc_id;
+    this.activeTurnId = payload.turn_id ?? null;
 
     // 1. Activate UI modal lock (frees mouse pointer, suspends WASD)
     this.setModalActive(true);
@@ -495,15 +497,17 @@ class Application {
 
   /**
    * Choice Selection Callback: Dispatches DIALOGUE packet via wsClient.
+   * Includes turn_id to prevent STALE_CHOICE errors on server.
    */
   private handleDialogueChoice(choiceId: number): void {
     const npcId = this.activeNpcId || LAO_WANG_CONFIG.id;
-    console.log(`[Main] Dispatching DIALOGUE packet: npc_id='${npcId}', choice_id=${choiceId}`);
+    console.log(`[Main] Dispatching DIALOGUE packet: npc_id='${npcId}', choice_id=${choiceId}, turn_id='${this.activeTurnId}'`);
 
     if (this.wsClient) {
       this.wsClient.send('DIALOGUE', {
         npc_id: npcId,
         choice_id: choiceId,
+        ...(this.activeTurnId ? { turn_id: this.activeTurnId } : {}),
       });
     }
   }
@@ -515,6 +519,7 @@ class Application {
     console.log('[Main] Dialogue overlay closed. Restoring player movement.');
     this.setModalActive(false);
     this.activeNpcId = null;
+    this.activeTurnId = null;
   }
 
   /**
