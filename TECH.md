@@ -39,12 +39,18 @@
 ### 🟦 DEV-A — «Backend + GameLogic»
 
 **Папка:** `server/`  
-**Запускает:** `bun run server/index.ts` → `:3000`  
-**Стек:** Bun · ws · better-sqlite3 · Express · JWT
+**Запускает:** `go run ./cmd/server` → `:3000`  
+**Стек:** Go 1.26 · gorilla/websocket · mattn/go-sqlite3 · golang-jwt/jwt · net/http
+
+#### Почему Go:
+- Горутины → тысячи WS-соединений без боли, один бинарник
+- `net/http` из стандартной библиотеки — никаких Express
+- CGO + go-sqlite3 → SQLite без лишних зависимостей
+- Компилируется в один бинарник: `go build -o server ./cmd/server`
 
 #### Что делает:
-- WebSocket-сервер — центр всех событий игры
-- REST: `/auth/login`, `/auth/register`, `/world/chunk/:id`
+- WebSocket-сервер — центр всех событий игры (gorilla/websocket Hub)
+- REST: `POST /auth/register`, `POST /auth/login`, `GET /health`
 - SQLite БД — всё состояние мира
 - **FSM движок NPC** — конечный автомат (IDLE → HAGGLING → FLATTERED → AGGRO)
 - **Chunk Manager** — мастер-карта 10×10, выдаёт только AOI-чанки (≤9 из 100)
@@ -94,23 +100,29 @@ CREATE TABLE inventory (
 );
 ```
 
-#### WebSocket пакеты:
+#### WebSocket пакеты (JSON через gorilla/websocket):
 
-```typescript
-// Клиент → Сервер
-{ type: "MOVE",       payload: { x, z, rotation } }
-{ type: "DIALOGUE",   payload: { npc_id, choice_id } }
-{ type: "INSPECT",    payload: { item_id, answer_id } }   // квиз предмета
-{ type: "CALCULATOR", payload: { npc_id, amount } }       // результат QTE
+```go
+// Все пакеты — единая структура
+type Packet struct {
+    Type    string          `json:"type"`
+    Payload json.RawMessage `json:"payload"`
+}
 
-// Сервер → Клиент
-{ type: "CHUNK_LOAD",   payload: { chunk_id, objects, npcs } }
-{ type: "CHUNK_UNLOAD", payload: { chunk_ids: ["2_3", "2_4"] } }
-{ type: "NPC_SPEECH",   payload: { npc_id, tokens[], choices[] } }
-{ type: "NPC_STATE",    payload: { npc_id, fsm_state, mianzi, aggro, price } }
-{ type: "PLAYER_MOVE",  payload: { player_id, x, z, rotation } }
-{ type: "WORD_LEARNED", payload: { word_id, word } }
-{ type: "BALANCE",      payload: { balance, delta } }
+// Клиент → Сервер (type →)
+// "MOVE"       { "x":1.2, "z":-3.4, "rotation":0.5 }
+// "DIALOGUE"   { "npc_id":"lao_wang", "choice_id":2 }
+// "INSPECT"    { "item_id":"teapot", "answer_id":1 }
+// "CALCULATOR" { "npc_id":"lao_wang", "amount":150 }
+
+// Сервер → Клиент (type →)
+// "CHUNK_LOAD"   { "chunk_id":"5_5", "objects":[...], "npcs":[...] }
+// "CHUNK_UNLOAD" { "chunk_ids":["2_3","2_4"] }
+// "NPC_SPEECH"   { "npc_id":"lao_wang", "tokens":[...], "choices":[...] }
+// "NPC_STATE"    { "npc_id":"lao_wang", "state":"AGGRO", "mianzi":30, "aggro":80 }
+// "PLAYER_MOVE"  { "player_id":42, "x":1.2, "z":-3.4, "rotation":0.5 }
+// "WORD_LEARNED" { "word_id":"word_expensive", "zh":"太贵了", "ru":"слишком дорого" }
+// "BALANCE"      { "balance":320, "delta":-180 }
 ```
 
 #### Итеративные слои DEV-A:
@@ -574,19 +586,29 @@ Rest-In-Hackaton/
 ├── IDEA.md
 ├── TASK.md
 ├── TECH.md              ← этот файл
+├── PLAN.md
 │
-├── server/              ← DEV-A
-│   ├── package.json     # bun / node зависимости
-│   ├── index.ts         # WS + Express entry point
-│   ├── db/
-│   │   ├── schema.sql
-│   │   └── database.ts
-│   ├── game/
-│   │   ├── ChunkManager.ts
-│   │   ├── NpcFSM.ts
-│   │   ├── VocabFilter.ts
-│   │   └── world/chunks/  # JSON данные чанков (100 файлов)
-│   └── auth/jwt.ts
+├── server/              ← DEV-A (Go 1.26)
+│   ├── go.mod
+│   ├── go.sum
+│   ├── cmd/server/
+│   │   └── main.go          # точка входа: http.ListenAndServe :3000
+│   ├── internal/
+│   │   ├── db/
+│   │   │   ├── db.go        # sql.Open + migrate
+│   │   │   └── schema.sql
+│   │   ├── hub/
+│   │   │   ├── hub.go       # WS Hub: Register/Unregister/Broadcast
+│   │   │   └── client.go    # Client: горутины read/write
+│   │   ├── game/
+│   │   │   ├── chunk.go     # ChunkManager + AOI (≤9/100)
+│   │   │   ├── fsm.go       # NPC FSM: IDLE→HAGGLING→AGGRO
+│   │   │   └── vocab.go     # VocabFilter → [???]
+│   │   └── handler/
+│   │       ├── auth.go      # POST /auth/register, /auth/login
+│   │       ├── ws.go        # GET /ws → upgrade
+│   │       └── health.go    # GET /health
+│   └── world/chunks/        # 100 JSON файлов чанков
 │
 ├── ai/                  ← DEV-B
 │   ├── middleware.py    # FastAPI → Ollama
@@ -625,25 +647,23 @@ Rest-In-Hackaton/
 ## ⚡ Быстрый старт — первые 15 минут
 
 ```bash
-# ШАГ 1: DEV-B запускает AI (качает модель ~2.5 GB — делать первым!)
+# ШАГ 1: DEV-B — ПЕРВЫМ запускает AI (качает модель ~2.5 GB!)
 ollama pull qwen3.5:4b
 ollama serve &
 cd ai && pip install -r requirements.txt
 uvicorn middleware:app --host 0.0.0.0 --port 8000
 
-# ШАГ 2: DEV-A запускает сервер
-cd server && bun install && bun run index.ts
-# → WS + REST на :3000
+# ШАГ 2: DEV-A — Go сервер
+cd server
+go mod tidy           # скачает gorilla/websocket, go-sqlite3, jwt
+go run ./cmd/server   # → :3000 (или go build -o srv ./cmd/server && ./srv)
 
-# ШАГ 3: DEV-C запускает клиент (доступен всем в LAN!)
+# ШАГ 3: DEV-C — клиент (доступен всем в LAN по IP ноута!)
 cd client && npm install && npm run dev -- --host
 # → http://192.168.1.X:5173
 
-# ШАГ 4: DEV-D запускает мониторинг
+# ШАГ 4: DEV-D — мониторинг
 python ops/monitor.py
-# → статус всех сервисов каждые 5 сек
-
-# Проверка: открыть http://localhost:5173 → должен открыться 3D мир
 ```
 
 ---
@@ -654,8 +674,8 @@ python ops/monitor.py
 |--------------|---------|-----|---------------|
 | LAN без интернета | Все зависимости локальны, npm/pip кеш | DEV-A+C | Выдернуть кабель → работает |
 | < 10% мира на клиенте | AOI + ChunkStreamer + `dispose()` | DEV-C | HUD + DevTools Memory |
-| WebSocket, не polling | `ws` библиотека, full-duplex | DEV-A | Network tab → WS фреймы |
-| Авторизация | JWT токены + bcrypt | DEV-A | `/auth/login` endpoint |
+| WebSocket, не polling | `gorilla/websocket`, Hub-паттерн | DEV-A | Network tab → WS фреймы |
+| Авторизация | JWT (`golang-jwt/jwt`) + bcrypt | DEV-A | `POST /auth/login` |
 | Персистентность | SQLite — всё состояние | DEV-A | F5 → на месте с прогрессом |
 | Адаптивный AI | Qwen3.5:4b + npc_relations + history | DEV-B | Лао Ван помнит воришку |
 | Нет хардкода в NPC | FSM + LLM + динамический промпт | DEV-A+B | Разные ответы на одну фразу |

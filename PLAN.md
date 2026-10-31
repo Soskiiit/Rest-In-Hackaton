@@ -12,20 +12,23 @@
 # DEV-B: ПЕРВОЕ ДЕЙСТВИЕ — качать модель фоном пока все настраиваются
 ollama pull qwen3.5:4b   # ~2.5 GB, займёт 5-15 мин
 
-# DEV-A: Инициализация сервера
-mkdir server && cd server
-bun init -y
-bun add ws express better-sqlite3 bcryptjs jsonwebtoken
-bun add -d @types/ws @types/express typescript
+# DEV-A: Инициализация Go сервера
+mkdir -p server/cmd/server server/internal/{db,hub,game,handler} server/world/chunks
+cd server
+go mod init hackaton/server   # go 1.26
+go get github.com/gorilla/websocket
+go get github.com/mattn/go-sqlite3
+go get github.com/golang-jwt/jwt/v5
+go get golang.org/x/crypto
 
 # DEV-C: Инициализация клиента
 npm create vite@latest client -- --template vanilla-ts
 cd client && npm install three
 
-# DEV-D: Git + структура + мониторинг
-git checkout -b dev   # основная ветка разработки
-mkdir -p ai ops server/game server/db server/auth client/src/engine client/src/ui client/src/net client/src/audio
-touch ops/monitor.py ops/backup.sh ops/demo-script.md
+# DEV-D: Git + структура + генератор чанков
+git checkout -b dev
+mkdir -p ai/prompts ops
+python ops/gen_chunks.py   # 100 JSON чанков за секунду
 ```
 
 **✅ Чекпоинт 0:** Репо создан, модель качается, у каждого открыт свой каталог.
@@ -35,74 +38,151 @@ touch ops/monitor.py ops/backup.sh ops/demo-script.md
 ## 🟢 ЭТАП 1 — «Живое соединение» (~1 час)
 > **Цель:** Два браузера подключены к серверу, видят друг друга в 3D.
 
-### DEV-A: Сервер + Auth + WebSocket
+### DEV-A: Go сервер — Auth + WebSocket Hub
 
-```typescript
-// server/index.ts — минимальный скелет
-import { WebSocketServer } from 'ws'
-import express from 'express'
-import Database from 'better-sqlite3'
+```go
+// server/cmd/server/main.go
+package main
 
-const app = express()
-const db = new Database('game.db')
+import (
+    "log"
+    "net/http"
+    "hackaton/server/internal/db"
+    "hackaton/server/internal/hub"
+    "hackaton/server/internal/handler"
+)
 
-// Создать таблицы
-db.exec(`
-  CREATE TABLE IF NOT EXISTS players (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    login TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    token TEXT,
-    pos_x REAL DEFAULT 0, pos_z REAL DEFAULT 0,
-    balance INTEGER DEFAULT 500,
-    profile TEXT DEFAULT 'tourist'
-  );
-  CREATE TABLE IF NOT EXISTS known_words (
-    player_id INTEGER, word_id TEXT,
-    PRIMARY KEY (player_id, word_id)
-  );
-  CREATE TABLE IF NOT EXISTS npc_relations (
-    npc_id TEXT, player_id INTEGER,
-    mianzi INTEGER DEFAULT 50, aggro INTEGER DEFAULT 0,
-    price_floor INTEGER DEFAULT 120,
-    history_json TEXT DEFAULT '[]',
-    PRIMARY KEY (npc_id, player_id)
-  );
-  CREATE TABLE IF NOT EXISTS inventory (
-    player_id INTEGER, item_id TEXT, price_paid INTEGER,
-    PRIMARY KEY (player_id, item_id)
-  );
-`)
+func main() {
+    database := db.Init("game.db")
+    defer database.Close()
 
-// REST: авторизация
-app.use(express.json())
-app.post('/auth/register', (req, res) => { /* bcrypt + insert */ })
-app.post('/auth/login',    (req, res) => { /* verify + jwt */ })
-app.get('/health', (_, res) => res.json({ ok: true }))
+    h := hub.NewHub(database)
+    go h.Run()
 
-const server = app.listen(3000)
-const wss = new WebSocketServer({ server })
+    mux := http.NewServeMux()
+    mux.HandleFunc("POST /auth/register", handler.Register(database))
+    mux.HandleFunc("POST /auth/login",    handler.Login(database))
+    mux.HandleFunc("GET  /health",        handler.Health())
+    mux.HandleFunc("/ws",                 handler.WS(h))
 
-const clients = new Map<string, WebSocket>() // token → ws
+    log.Println("🚀 :3000")
+    log.Fatal(http.ListenAndServe(":3000", cors(mux)))
+}
+```
 
-wss.on('connection', (ws, req) => {
-  // 1. Проверить токен из query (?token=...)
-  // 2. Добавить в clients
-  // 3. Слушать сообщения → роутить по type
-  ws.on('message', (raw) => {
-    const msg = JSON.parse(raw.toString())
-    switch (msg.type) {
-      case 'MOVE': handleMove(ws, msg.payload); break
+```go
+// server/internal/hub/hub.go — горутинный WS Hub
+package hub
+
+import (
+    "encoding/json"
+    "sync"
+    "github.com/gorilla/websocket"
+)
+
+type Packet struct {
+    Type    string          `json:"type"`
+    Payload json.RawMessage `json:"payload"`
+}
+
+type Client struct {
+    Hub      *Hub
+    Conn     *websocket.Conn
+    Send     chan []byte
+    PlayerID int64
+    Token    string
+    PosX, PosZ float64
+}
+
+type Hub struct {
+    clients    map[*Client]bool
+    broadcast  chan []byte
+    register   chan *Client
+    unregister chan *Client
+    mu         sync.RWMutex
+    // db, chunkManager, etc.
+}
+
+func NewHub(db any) *Hub {
+    return &Hub{
+        clients:    make(map[*Client]bool),
+        broadcast:  make(chan []byte, 256),
+        register:   make(chan *Client),
+        unregister: make(chan *Client),
     }
-  })
-})
+}
 
-function handleMove(ws: any, payload: any) {
-  // Сохранить позицию в БД
-  db.prepare('UPDATE players SET pos_x=?, pos_z=? WHERE token=?')
-    .run(payload.x, payload.z, getToken(ws))
-  // Разослать всем в том же чанке
-  broadcast({ type: 'PLAYER_MOVE', payload })
+func (h *Hub) Run() {
+    for {
+        select {
+        case c := <-h.register:
+            h.mu.Lock()
+            h.clients[c] = true
+            h.mu.Unlock()
+        case c := <-h.unregister:
+            h.mu.Lock()
+            if _, ok := h.clients[c]; ok {
+                delete(h.clients, c)
+                close(c.Send)
+            }
+            h.mu.Unlock()
+        case msg := <-h.broadcast:
+            h.mu.RLock()
+            for c := range h.clients {
+                select {
+                case c.Send <- msg:
+                default:
+                    close(c.Send)
+                    delete(h.clients, c)
+                }
+            }
+            h.mu.RUnlock()
+        }
+    }
+}
+```
+
+```go
+// server/internal/db/db.go
+package db
+
+import (
+    "database/sql"
+    _ "github.com/mattn/go-sqlite3"
+)
+
+func Init(path string) *sql.DB {
+    db, err := sql.Open("sqlite3", path+"?_journal=WAL&_timeout=5000")
+    if err != nil { panic(err) }
+
+    db.Exec(`PRAGMA foreign_keys = ON`)
+    db.Exec(`CREATE TABLE IF NOT EXISTS players (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        login         TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        token         TEXT,
+        pos_x         REAL DEFAULT 0,
+        pos_z         REAL DEFAULT 0,
+        balance       INTEGER DEFAULT 500,
+        profile       TEXT DEFAULT 'tourist'
+    )`)
+    db.Exec(`CREATE TABLE IF NOT EXISTS known_words (
+        player_id INTEGER, word_id TEXT,
+        learned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (player_id, word_id)
+    )`)
+    db.Exec(`CREATE TABLE IF NOT EXISTS npc_relations (
+        npc_id TEXT, player_id INTEGER,
+        mianzi INTEGER DEFAULT 50, aggro INTEGER DEFAULT 0,
+        price_floor INTEGER DEFAULT 120,
+        history_json TEXT DEFAULT '[]',
+        PRIMARY KEY (npc_id, player_id)
+    )`)
+    db.Exec(`CREATE TABLE IF NOT EXISTS inventory (
+        player_id INTEGER, item_id TEXT, price_paid INTEGER,
+        PRIMARY KEY (player_id, item_id)
+    )`)
+    return db
 }
 ```
 
@@ -151,45 +231,63 @@ function animate() {
 animate()
 ```
 
-**✅ Чекпоинт 1:** Два браузера открыты → оба видят персонажей в 3D → движение синхронизируется.
+**✅ Чекпоинт 1:** `go run ./cmd/server` стартует → авторизация работает → два браузера в 3D мире видят друг друга.
 
 ---
 
 ## 🟢 ЭТАП 2 — «Чанки и правило 10%» (~1 час)
 > **Цель:** Мир разбит на чанки, HUD показывает «Кеш: 9% ✅»
 
-### DEV-A: Chunk Manager + AOI
+### DEV-A: Go ChunkManager + AOI
 
-```typescript
-// server/game/ChunkManager.ts
-export class ChunkManager {
-  private chunks = new Map<string, ChunkData>() // загружены из JSON файлов
+```go
+// server/internal/game/chunk.go
+package game
 
-  constructor() {
-    // Загрузить все 100 чанков в память сервера (это OK — сервер хранит всё)
-    for (let x = 0; x < 10; x++)
-      for (let z = 0; z < 10; z++) {
-        const id = `${x}_${z}`
-        this.chunks.set(id, require(`./world/chunks/${id}.json`))
-      }
-  }
+import (
+    "encoding/json"
+    "fmt"
+    "os"
+)
 
-  getAOI(px: number, pz: number): string[] {
-    const cx = Math.floor(px / 20) // размер чанка = 20 юнитов
-    const cz = Math.floor(pz / 20)
-    const ids: string[] = []
-    for (let dx = -1; dx <= 1; dx++)
-      for (let dz = -1; dz <= 1; dz++) {
-        const x = cx + dx, z = cz + dz
-        if (x >= 0 && x < 10 && z >= 0 && z < 10)
-          ids.push(`${x}_${z}`)
-      }
-    return ids // максимум 9 из 100 = 9% ✅
-  }
+type ChunkData struct {
+    ID        string     `json:"id"`
+    Buildings []Building `json:"buildings"`
+    Lanterns  []Vec3     `json:"lanterns"`
+    NpcID     string     `json:"npc_id,omitempty"`
+}
 
-  getChunkData(id: string): ChunkData {
-    return this.chunks.get(id)!
-  }
+type ChunkManager struct {
+    chunks map[string]*ChunkData // все 100 в памяти сервера
+}
+
+func NewChunkManager() *ChunkManager {
+    cm := &ChunkManager{chunks: make(map[string]*ChunkData)}
+    for x := range 10 {
+        for z := range 10 {
+            id := fmt.Sprintf("%d_%d", x, z)
+            data, _ := os.ReadFile(fmt.Sprintf("world/chunks/%s.json", id))
+            var cd ChunkData
+            json.Unmarshal(data, &cd)
+            cm.chunks[id] = &cd
+        }
+    }
+    return cm
+}
+
+// AOI — максимум 9 чанков из 100 = 9% ✅
+func (cm *ChunkManager) GetAOI(px, pz float64) []string {
+    cx, cz := int(px/20), int(pz/20)
+    var ids []string
+    for dx := -1; dx <= 1; dx++ {
+        for dz := -1; dz <= 1; dz++ {
+            x, z := cx+dx, cz+dz
+            if x >= 0 && x < 10 && z >= 0 && z < 10 {
+                ids = append(ids, fmt.Sprintf("%d_%d", x, z))
+            }
+        }
+    }
+    return ids // len ≤ 9
 }
 ```
 
@@ -294,67 +392,55 @@ curl -X POST http://localhost:8000/dialogue \
   -d '{"npc_id":"lao_wang","player_message":"Сколько стоит нефрит?","context":{"price":800,"price_floor":120,"mianzi":50,"aggro":0,"history":"[]"}}'
 ```
 
-### DEV-A: Роутинг диалогов на сервере
+### DEV-A: Go — роутинг диалогов → AI middleware
 
-```typescript
-// server/index.ts — добавить роутинг к AI
-case 'DIALOGUE': await handleDialogue(ws, msg.payload); break
+```go
+// server/internal/handler/ws.go — обработчик DIALOGUE
+case "DIALOGUE":
+    var p struct {
+        NpcID    string `json:"npc_id"`
+        ChoiceID int    `json:"choice_id"`
+    }
+    json.Unmarshal(msg.Payload, &p)
 
-async function handleDialogue(ws: any, payload: { npc_id: string, choice_id: number }) {
-  const player = getPlayer(ws)
-  const rel = db.prepare('SELECT * FROM npc_relations WHERE npc_id=? AND player_id=?')
-    .get(payload.npc_id, player.id) as any
+    // Достать состояние NPC из БД
+    var rel NPCRelation
+    db.QueryRow(`SELECT mianzi, aggro, price_floor, history_json
+        FROM npc_relations WHERE npc_id=? AND player_id=?`,
+        p.NpcID, client.PlayerID).Scan(
+        &rel.Mianzi, &rel.Aggro, &rel.PriceFloor, &rel.HistoryJSON)
 
-  // Формируем выбранную реплику как текст
-  const choiceText = getChoiceText(payload.choice_id) // из предыдущего ответа
+    // Запрос к AI middleware (Python FastAPI)
+    aiResp, err := callAI(p.NpcID, choiceText, rel)
+    if err != nil {
+        // fallback: FSM без LLM
+        client.sendFSMResponse(p.NpcID, rel)
+        return
+    }
 
-  // Запрос к AI middleware
-  const aiResp = await fetch('http://localhost:8000/dialogue', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      npc_id: payload.npc_id,
-      player_message: choiceText,
-      context: {
-        price: rel?.price_floor ?? 800,
-        price_floor: 120,
-        mianzi: rel?.mianzi ?? 50,
-        aggro: rel?.aggro ?? 0,
-        history: rel?.history_json ?? '[]'
-      }
-    })
-  }).then(r => r.json())
+    // Обновить БД (upsert)
+    db.Exec(`INSERT INTO npc_relations VALUES (?,?,?,?,?,?)
+        ON CONFLICT(npc_id,player_id) DO UPDATE SET
+        mianzi=mianzi+excluded.mianzi,
+        aggro=aggro+excluded.aggro,
+        price_floor=excluded.price_floor,
+        history_json=excluded.history_json`,
+        p.NpcID, client.PlayerID,
+        aiResp.MianziDelta, aiResp.AggroDelta,
+        aiResp.PriceNew, aiResp.NewHistory)
 
-  const parsed = aiResp.parsed
-  if (!parsed) return // fallback FSM
+    // Отфильтровать токены под словарь игрока → [???]
+    tokens := filterVocab(aiResp.Tokens, client.PlayerID, db)
 
-  // Обновить состояние в БД
-  db.prepare(`
-    INSERT INTO npc_relations (npc_id, player_id, mianzi, aggro, price_floor, history_json)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT DO UPDATE SET
-      mianzi = mianzi + excluded.mianzi,
-      aggro = aggro + excluded.aggro,
-      price_floor = excluded.price_floor,
-      history_json = excluded.history_json
-  `).run(
-    payload.npc_id, player.id,
-    parsed.mianzi_delta, parsed.aggro_delta,
-    parsed.price_new,
-    JSON.stringify([...JSON.parse(rel?.history_json ?? '[]'), choiceText].slice(-6))
-  )
-
-  // Отправить ответ клиенту
-  send(ws, { type: 'NPC_SPEECH', payload: {
-    npc_id: payload.npc_id,
-    tokens: parsed.speech_tokens,
-    choices: parsed.choices,
-    emotion: parsed.emotion,
-    mianzi: (rel?.mianzi ?? 50) + parsed.mianzi_delta,
-    aggro: (rel?.aggro ?? 0) + parsed.aggro_delta,
-    price: parsed.price_new
-  }})
-}
+    client.send(Packet{Type: "NPC_SPEECH", Payload: mustMarshal(map[string]any{
+        "npc_id":  p.NpcID,
+        "tokens":  tokens,
+        "choices": aiResp.Choices,
+        "emotion": aiResp.Emotion,
+        "mianzi":  rel.Mianzi + aiResp.MianziDelta,
+        "aggro":   rel.Aggro + aiResp.AggroDelta,
+        "price":   aiResp.PriceNew,
+    })})
 ```
 
 ### DEV-C: Диалоговый UI (заглушка без [???])
@@ -391,39 +477,49 @@ export class DialogueUI {
 ## 🟢 ЭТАП 4 — «Магия субтитров [???]» (~1 час)
 > **Цель:** Два игрока видят РАЗНЫЕ строки 2 — у каждого свои `[???]`.
 
-### DEV-A: VocabFilter
+### DEV-A: Go VocabFilter + квиз предмета
 
-```typescript
-// server/game/VocabFilter.ts
-export function filterTokens(tokens: Token[], playerKnownWords: Set<string>): Token[] {
-  return tokens.map(t => ({
-    ...t,
-    ru: playerKnownWords.has(t.id) ? t.ru : '[???]'
-  }))
+```go
+// server/internal/game/vocab.go
+package game
+
+import "database/sql"
+
+func FilterTokens(db *sql.DB, playerID int64, tokens []Token) []Token {
+    rows, _ := db.Query(
+        `SELECT word_id FROM known_words WHERE player_id=?`, playerID)
+    defer rows.Close()
+
+    known := make(map[string]bool)
+    for rows.Next() {
+        var wid string
+        rows.Scan(&wid)
+        known[wid] = true
+    }
+
+    result := make([]Token, len(tokens))
+    for i, t := range tokens {
+        result[i] = t
+        if !known[t.ID] {
+            result[i].Ru = "[???]"
+        }
+    }
+    return result
 }
 
-// В handleDialogue — перед отправкой каждому игроку:
-const knownWords = new Set(
-  db.prepare('SELECT word_id FROM known_words WHERE player_id=?')
-    .all(player.id).map((r: any) => r.word_id)
-)
-const filtered = filterTokens(parsed.speech_tokens, knownWords)
-send(ws, { type: 'NPC_SPEECH', payload: { ...payload, tokens: filtered } })
-```
-
-### DEV-A: Мини-квиз предмета (E → учим слово)
-
-```typescript
-case 'INSPECT': handleInspect(ws, msg.payload); break
-
-function handleInspect(ws: any, { item_id, answer_id }: any) {
-  const item = ITEMS[item_id] // { word_id, correct_answer_id, options: [...] }
-  if (answer_id === item.correct_answer_id) {
-    const player = getPlayer(ws)
-    db.prepare('INSERT OR IGNORE INTO known_words VALUES (?,?)').run(player.id, item.word_id)
-    send(ws, { type: 'WORD_LEARNED', payload: { word_id: item.word_id, word: item } })
-  }
-}
+// handler: INSPECT → проверить ответ → записать слово
+case "INSPECT":
+    var p struct {
+        ItemID   string `json:"item_id"`
+        AnswerID int    `json:"answer_id"`
+    }
+    json.Unmarshal(msg.Payload, &p)
+    item := items[p.ItemID]
+    if p.AnswerID == item.CorrectID {
+        db.Exec(`INSERT OR IGNORE INTO known_words VALUES (?,?)`,
+            client.PlayerID, item.WordID)
+        client.send(Packet{Type: "WORD_LEARNED", Payload: mustMarshal(item)})
+    }
 ```
 
 ### DEV-C: QuizPanel UI + обновление строки 2 в реальном времени
@@ -444,16 +540,24 @@ ws.on('WORD_LEARNED', ({ word_id, word }) => {
 ## 🟢 ЭТАП 5 — «COOP + полный торг» (~1 час)
 > **Цель:** Два игрока координируют торг. Полный цикл от подхода до покупки.
 
-### DEV-A: Пространственные события (только игроки рядом получают пакеты NPC)
+### DEV-A: Broadcast spatial (Go горутины)
 
-```typescript
-// Рассылать NPC события только игрокам в радиусе 15 юнитов
-function broadcastToNearby(npcPos: Vec2, packet: any) {
-  for (const [token, ws] of clients) {
-    const player = getPlayerByToken(token)
-    const dist = Math.hypot(player.pos_x - npcPos.x, player.pos_z - npcPos.z)
-    if (dist < 15) send(ws, packet)
-  }
+```go
+// Рассылать только игрокам в радиусе 15 юнитов от NPC
+func (h *Hub) BroadcastNearby(npcX, npcZ float64, pkt Packet) {
+    data, _ := json.Marshal(pkt)
+    h.mu.RLock()
+    defer h.mu.RUnlock()
+    for c := range h.clients {
+        dx := c.PosX - npcX
+        dz := c.PosZ - npcZ
+        if dx*dx+dz*dz < 15*15 {
+            select {
+            case c.Send <- data:
+            default:
+            }
+        }
+    }
 }
 ```
 
@@ -581,12 +685,12 @@ TTS.speak(zhText, 'zh-CN')
 
 | Этап | Время | DEV-A | DEV-B | DEV-C | DEV-D | Демо жюри |
 |------|-------|-------|-------|-------|-------|-----------|
-| **0** | 20 мин | `bun init` | `ollama pull` | `vite init` | `git init` + `gen_chunks.py` | — |
-| **1** | +60 мин | Auth + WS + SQLite | Тестирует LLM вручную | Three.js + WASD + WS | Мониторинг запущен | Два игрока в мире ✅ |
-| **2** | +60 мин | ChunkManager + AOI | FastAPI middleware | ChunkStreamer + HUD % | Баги этапа 1 | HUD «9% ✅» ✅ |
-| **3** | +90 мин | AI роутинг + handleDialogue | Промпт Лао Вана | DialogueUI (без [???]) | Тест диалога | LLM отвечает ✅ |
-| **4** | +60 мин | VocabFilter + квиз | Промпт тюнинг | QuizPanel + [???] реалтайм | Тест двух игроков | Разные субтитры ✅ |
-| **5** | +60 мин | Broadcast spatial + покупка | — | Calculator QTE | Полный цикл как игрок 2 | **MVP готов ✅** |
+| **0** | 20 мин | `go mod init` + `go get` | `ollama pull` | `vite init` | `git init` + `gen_chunks.py` | — |
+| **1** | +60 мин | Auth + WS Hub + SQLite (Go) | Тестирует LLM вручную | Three.js + WASD + WS | Мониторинг запущен | Два игрока в мире ✅ |
+| **2** | +60 мин | ChunkManager + AOI (Go) | FastAPI middleware | ChunkStreamer + HUD % | Баги этапа 1 | HUD «9% ✅» ✅ |
+| **3** | +90 мин | AI роутинг (Go → FastAPI) | Промпт Лао Вана | DialogueUI (без [???]) | Тест диалога | LLM отвечает ✅ |
+| **4** | +60 мин | VocabFilter + квиз (Go) | Промпт тюнинг | QuizPanel + [???] реалтайм | Тест двух игроков | Разные субтитры ✅ |
+| **5** | +60 мин | BroadcastNearby + покупка | — | Calculator QTE | Полный цикл как игрок 2 | **MVP готов ✅** |
 | **6** | +45 мин | Fallback FSM если LLM медленно | TTS озвучка | Bloom + эмоции NPC | CSS полиш | Красиво ✅ |
 | **7** | +60 мин | NPC placement в чанках | Повар + Охранник промпты | Мелкие баги | Тест 3 сценариев | Модульность ✅ |
 | **8** | остаток | Оптимизация | — | FPS / реконнект | Питч репетиция | Финал ✅ |
@@ -629,11 +733,13 @@ feature/xxx   ← крупные фичи (Calculator QTE и т.п.)
 # 1. DEV-B — НЕМЕДЛЕННО:
 ollama pull qwen3.5:4b
 
-# 2. DEV-D — генерирует чанки пока остальные ставят зависимости:
-python ops/gen_chunks.py
+# 2. DEV-A — инит Go модуля:
+mkdir -p server/cmd/server server/internal/{db,hub,game,handler} server/world/chunks
+cd server && go mod init hackaton/server
+go get github.com/gorilla/websocket github.com/mattn/go-sqlite3 github.com/golang-jwt/jwt/v5 golang.org/x/crypto
 
-# 3. DEV-A:
-cd server && bun install
+# 3. DEV-D — генерирует чанки:
+python ops/gen_chunks.py
 
 # 4. DEV-C:
 cd client && npm install
