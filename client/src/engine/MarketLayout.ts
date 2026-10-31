@@ -50,8 +50,9 @@ export class MarketLayout {
     // 1. SOUTH ENTRANCE AVENUE (Player walks North towards Z=100)
     // Left row at X=96.0 (facing East towards center: rotY = -Math.PI / 2)
     // Right row at X=104.0 (facing West towards center: rotY = Math.PI / 2)
+    // Ends at z=91.5 so it leaves the entrance to West/East side corridors completely open!
     // -------------------------------------------------------------------------
-    for (let z = 62; z <= 94; z += 3.6) {
+    for (let z = 62; z <= 91.5; z += 3.6) {
       addStall(96.0, z, -Math.PI / 2);
       addStall(104.0, z, Math.PI / 2);
     }
@@ -60,10 +61,12 @@ export class MarketLayout {
     // 2. WEST CORRIDOR & WEST SQUARE PLAZA
     // -------------------------------------------------------------------------
     // West Corridor (along North & South walls, wide unobstructed walkway along Z=100)
-    for (let x = 74; x <= 94; x += 3.6) {
+    // South row (Z=104.5) stops at x=91.0 to leave the crossroads corner completely open
+    for (let x = 74; x <= 91.0; x += 3.6) {
       addStall(x, 104.5, 0); // South row facing North
     }
-    for (let x = 74; x <= 92; x += 3.6) {
+    // North row (Z=95.5) stops at x=78.5 to not jut out into the passage
+    for (let x = 74; x <= 78.5; x += 3.6) {
       addStall(x, 95.5, Math.PI); // North row facing South
     }
 
@@ -86,10 +89,12 @@ export class MarketLayout {
     // 3. EAST CORRIDOR & EAST SQUARE PLAZA
     // -------------------------------------------------------------------------
     // East Corridor (along North & South walls, wide unobstructed walkway along Z=100)
-    for (let x = 106; x <= 126; x += 3.6) {
+    // South row (Z=104.5) starts at x=109.0 so it doesn't obstruct the crossroads corner
+    for (let x = 109.0; x <= 126; x += 3.6) {
       addStall(x, 104.5, 0); // South row facing North
     }
-    for (let x = 108; x <= 126; x += 3.6) {
+    // North row (Z=95.5) starts at x=121.5 so it doesn't jut out into the passage
+    for (let x = 121.5; x <= 126; x += 3.6) {
       addStall(x, 95.5, Math.PI); // North row facing South
     }
 
