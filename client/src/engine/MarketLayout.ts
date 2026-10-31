@@ -377,6 +377,14 @@ export class MarketLayout {
     const overheadStringsGroup = this.buildOverheadLanternStrings();
     root.add(overheadStringsGroup);
 
+    // Freeze local matrices on all static meshes to eliminate scene.updateMatrixWorld CPU overhead
+    root.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.matrixAutoUpdate = false;
+        child.updateMatrix();
+      }
+    });
+
     return root;
   }
 

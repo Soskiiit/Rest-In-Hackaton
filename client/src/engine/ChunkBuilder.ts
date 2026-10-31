@@ -71,7 +71,7 @@ export interface ChunkBuilderOptions {
 export const DEFAULT_CHUNK_OPTIONS: ChunkBuilderOptions = {
   enableShadows: true,
   enablePointLights: true,
-  maxLightsPerChunk: 2,
+  maxLightsPerChunk: 1,
   pavementColor: SCENE_COLORS.floorColor,
 };
 
@@ -285,6 +285,14 @@ export class ChunkBuilder {
     const proceduralProps = this.generateProceduralProps(rng, opts);
     chunkGroup.add(proceduralProps);
 
+    // Freeze local matrices on all static meshes to eliminate scene.updateMatrixWorld CPU overhead
+    chunkGroup.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.matrixAutoUpdate = false;
+        child.updateMatrix();
+      }
+    });
+
     return chunkGroup;
   }
 
@@ -424,7 +432,7 @@ export class ChunkBuilder {
     // Pattern: Plazas (open squares with inward stalls) vs Cross/Turn Streets
     const isSquarePlaza = (cx + cz) % 2 === 0;
 
-    let slots: Array<{ x: number; z: number; rotY: number }> = [];
+    let slots: Array<{ x: number; z: number; rotY: number }>;
 
     if (isSquarePlaza) {
       // SQUARE PLAZA: Stalls along 4 perimeter sides facing the open central square!
@@ -785,7 +793,7 @@ export class ChunkBuilder {
       const cupMat = new THREE.MeshStandardMaterial({ color: 0xdedede, roughness: 0.3 });
       for (let i = 0; i < 3; i++) {
         const cup = new THREE.Mesh(cupGeo, cupMat);
-        cup.position.set(0.0 + i * 0.18, yTop + 0.06, 0);
+        cup.position.set(i * 0.18, yTop + 0.06, 0);
         stall.add(cup);
       }
 
@@ -1009,7 +1017,8 @@ export class ChunkBuilder {
         const crate = new THREE.Mesh(crateGeo, crateMat);
         crate.position.set(pt.x, size / 2, pt.z);
         crate.rotation.y = rng.range(0, Math.PI);
-        crate.castShadow = opts.enableShadows ?? true;
+        crate.castShadow = false; // small prop: disabled to save shadow pass draw calls
+        crate.receiveShadow = opts.enableShadows ?? true;
         group.add(crate);
       } else {
         // Ceramic Barrel / Urn
@@ -1021,7 +1030,8 @@ export class ChunkBuilder {
         });
         const barrel = new THREE.Mesh(barrelGeo, barrelMat);
         barrel.position.set(pt.x, 0.4, pt.z);
-        barrel.castShadow = opts.enableShadows ?? true;
+        barrel.castShadow = false; // small prop: disabled to save shadow pass draw calls
+        barrel.receiveShadow = opts.enableShadows ?? true;
         group.add(barrel);
       }
     }

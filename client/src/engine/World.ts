@@ -67,6 +67,7 @@ export class World {
   private chunkStreamer: ChunkStreamer | null = null;
   private vendorMixers: THREE.AnimationMixer[] = [];
   private cachedWallBoundingBoxes: THREE.Box3[] | null = null;
+  private shadowFrameCounter: number = 0;
 
   private clock: THREE.Clock = new THREE.Clock();
   private animationFrameId: number | null = null;
@@ -97,10 +98,13 @@ export class World {
       antialias: true,
       powerPreference: 'high-performance',
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Cap pixelRatio to 1.25 to prevent fill-rate saturation on 2K/4K/Retina displays
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
 
@@ -201,9 +205,16 @@ export class World {
         // Scale tile geometry so each unit is exactly 2.0 x 2.0 meters
         mergedGeo.scale(4.03, 1.0, 2.045);
 
-        // 100 x 100 grid spanning [0, 200] in X and Z
-        const countX = 100;
-        const countZ = 100;
+        // Populate tiles covering the playable market area with generous margins [42, 158] x [54, 154]
+        // Outside these coordinates are tall 8.5m solid exterior walls and fog
+        const startX = 42;
+        const endX = 158;
+        const startZ = 54;
+        const endZ = 154;
+        const step = 2.0;
+
+        const countX = Math.round((endX - startX) / step);
+        const countZ = Math.round((endZ - startZ) / step);
         const totalInstances = countX * countZ;
 
         const instancedMesh = new THREE.InstancedMesh(
@@ -218,9 +229,9 @@ export class World {
         let idx = 0;
 
         for (let ix = 0; ix < countX; ix++) {
-          const posX = ix * 2 + 1; // centered in 2m grid: 1, 3, 5, ..., 199
+          const posX = startX + ix * step + 1;
           for (let iz = 0; iz < countZ; iz++) {
-            const posZ = iz * 2 + 1;
+            const posZ = startZ + iz * step + 1;
             dummy.position.set(posX, 0.015, posZ);
             dummy.updateMatrix();
             instancedMesh.setMatrixAt(idx++, dummy.matrix);
@@ -230,7 +241,7 @@ export class World {
         instancedMesh.instanceMatrix.needsUpdate = true;
         this.stoneTileFloor = instancedMesh;
         this.scene.add(this.stoneTileFloor);
-        console.log('[World] Stone tile pavement floor generated across 200x200 world (10,000 instances).');
+        console.log(`[World] Stone tile pavement floor generated across market area (${totalInstances} instances).`);
       },
       undefined,
       (err) => {
@@ -265,8 +276,8 @@ export class World {
     this.scene.add(this.dirLight.target);
 
     this.dirLight.castShadow = true;
-    this.dirLight.shadow.mapSize.width = 2048;
-    this.dirLight.shadow.mapSize.height = 2048;
+    this.dirLight.shadow.mapSize.width = 1024;
+    this.dirLight.shadow.mapSize.height = 1024;
     this.dirLight.shadow.camera.near = 10;
     this.dirLight.shadow.camera.far = 250;
     // Tightened shadow frustum covering the entire active market layout (136x136m)
@@ -429,7 +440,7 @@ export class World {
 
         clone.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
-            child.castShadow = true;
+            child.castShadow = false; // Background vendors are sheltered under stall canopies
             child.receiveShadow = true;
           }
         });
@@ -594,7 +605,7 @@ export class World {
     this.camera.updateProjectionMatrix();
 
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
   };
 
   /**
@@ -635,8 +646,15 @@ export class World {
 
   /**
    * Directly renders the 3D scene (useful when main.ts manages its own external render loop).
+   * Throttles shadow depth pass to ~20 Hz (every 3rd frame) to eliminate 67% of shadow pass overhead
+   * while keeping stationary environment and character shadows completely smooth.
    */
   public render(): void {
+    this.shadowFrameCounter++;
+    if (this.shadowFrameCounter >= 3) {
+      this.renderer.shadowMap.needsUpdate = true;
+      this.shadowFrameCounter = 0;
+    }
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -648,6 +666,7 @@ export class World {
       const changed = this.chunkStreamer.update(playerX, playerZ);
       if (changed) {
         this.cachedWallBoundingBoxes = null;
+        this.renderer.shadowMap.needsUpdate = true;
       }
     }
 
