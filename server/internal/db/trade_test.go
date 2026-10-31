@@ -4,14 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
+	"hackaton/server/internal/testdb"
 	"sync"
 	"testing"
 )
 
 func tradeStore(t *testing.T) (*Store, string, Player, Player) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "game.db")
+	path := testdb.New(t)
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestPurchaseRollsBackAfterDebit(t *testing.T) {
 	s, _, a, _ := tradeStore(t)
 	ctx := context.Background()
 	scene := readyScene(t, s, a.ID, "lao_wang")
-	if _, err := s.SQL.Exec("CREATE TRIGGER fail_inventory BEFORE INSERT ON inventory BEGIN SELECT RAISE(ABORT,'simulated write failure'); END"); err != nil {
+	if _, err := s.SQL.Exec("CREATE FUNCTION fail_inventory_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated write failure'; END $$; CREATE TRIGGER fail_inventory BEFORE INSERT ON inventory FOR EACH ROW EXECUTE FUNCTION fail_inventory_fn()"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.Buy(ctx, a.ID, "broken", "lao_wang", "jade_amulet", 150, scene.Version); err == nil {
@@ -187,8 +187,8 @@ func TestConcurrentPurchasesCannotOverdrawPersonalWallet(t *testing.T) {
 	}
 }
 func TestUpgradeFromStageFourPreservesProgress(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	raw, err := sql.Open("sqlite3", path)
+	path := testdb.New(t)
+	raw, err := sql.Open("pgx", path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestUpgradeFromStageFourPreservesProgress(t *testing.T) {
 	if _, err = raw.Exec(string(migration)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = raw.Exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);INSERT INTO schema_migrations(version) VALUES(1);INSERT INTO players(login,password_hash,profile,balance) VALUES('legacy','hash','culture',320);INSERT INTO known_words(player_id,word_id) VALUES(1,'word_teapot');INSERT INTO inventory(player_id,item_id,price_paid) VALUES(1,'legacy_item',180);INSERT INTO npc_relations(npc_id,player_id,current_price,price_floor,aggro) VALUES('lao_wang',1,640,120,25)"); err != nil {
+	if _, err = raw.Exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);INSERT INTO schema_migrations(version) VALUES(1);INSERT INTO players(login,password_hash,profile,balance) VALUES('legacy','hash','culture',320);INSERT INTO known_words(player_id,word_id) VALUES(1,'word_teapot');INSERT INTO inventory(player_id,item_id,price_paid) VALUES(1,'legacy_item',180);INSERT INTO npc_relations(npc_id,player_id,current_price,price_floor,aggro) VALUES('lao_wang',1,640,120,25)"); err != nil {
 		t.Fatal(err)
 	}
 	raw.Close()
@@ -240,5 +240,66 @@ func TestSharedSceneCanReplaceLegacyPersonalPriceFloor(t *testing.T) {
 	saved, err := s.Relation(ctx, a.ID, "lao_wang", 800, 120)
 	if err != nil || saved.Floor != 120 || saved.Price != 700 {
 		t.Fatalf("inconsistent personal snapshot: %+v %v", saved, err)
+	}
+}
+
+func TestConcurrentIdenticalPurchaseReturnsOneReceipt(t *testing.T) {
+	s, _, a, _ := tradeStore(t)
+	ctx := context.Background()
+	scene := readyScene(t, s, a.ID, "lao_wang")
+	gate := make(chan struct{})
+	type result struct {
+		receipt Receipt
+		replay  bool
+		err     error
+	}
+	results := make(chan result, 6)
+	for i := 0; i < 6; i++ {
+		go func() {
+			<-gate
+			r, replayed, err := s.Buy(ctx, a.ID, "same-request", "lao_wang", "jade_amulet", 150, scene.Version)
+			results <- result{r, replayed, err}
+		}()
+	}
+	close(gate)
+	fresh := 0
+	for i := 0; i < 6; i++ {
+		r := <-results
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		if !r.replay {
+			fresh++
+		}
+		if r.receipt.BalanceAfter != 350 {
+			t.Fatal("inconsistent receipt")
+		}
+	}
+	p, err := s.Player(ctx, a.ID)
+	if err != nil || fresh != 1 || p.Balance != 350 {
+		t.Fatalf("duplicate charge: fresh=%d player=%+v err=%v", fresh, p, err)
+	}
+}
+func TestConcurrentServerMigrationsAreSerialized(t *testing.T) {
+	dsn := testdb.New(t)
+	results := make(chan error, 3)
+	for i := 0; i < 3; i++ {
+		go func() {
+			s, err := Open(dsn)
+			if err == nil {
+				defer s.Close()
+				var n int
+				err = s.SQL.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&n)
+				if err == nil && n != 2 {
+					err = errors.New("migration count changed")
+				}
+			}
+			results <- err
+		}()
+	}
+	for i := 0; i < 3; i++ {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
 	}
 }

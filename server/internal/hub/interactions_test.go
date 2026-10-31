@@ -3,7 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
+	"hackaton/server/internal/testdb"
 	"testing"
 	"time"
 
@@ -16,7 +16,7 @@ func TestObservedSpeechDoesNotInvalidateOwnDialogue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := db.Open(filepath.Join(t.TempDir(), "game.db"))
+	store, err := db.Open(testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

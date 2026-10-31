@@ -1,3 +1,4 @@
+// Package db stores authoritative game state in PostgreSQL.
 package db
 
 import (
@@ -7,12 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/mattn/go-sqlite3"
-	"net/url"
-	"os"
-	"path/filepath"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/stdlib"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 //go:embed migrations/*.sql
@@ -49,32 +51,31 @@ type Relation struct {
 	History  []Message `json:"-"`
 }
 
-func Open(path string) (*Store, error) {
-	abs, err := filepath.Abs(path)
+func Open(dsn string) (*Store, error) {
+	if !strings.HasPrefix(dsn, "postgres://") && !strings.HasPrefix(dsn, "postgresql://") {
+		return nil, errors.New("DATABASE_URL must be a PostgreSQL URL")
+	}
+	config, err := pgx.ParseConfig(dsn)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("invalid DATABASE_URL")
 	}
-	if err = os.MkdirAll(filepath.Dir(abs), 0700); err != nil {
-		return nil, err
+	config.ConnectTimeout = 5 * time.Second
+	config.RuntimeParams["application_name"] = "rest-in-hackaton"
+	config.RuntimeParams["statement_timeout"] = "10000"
+	config.RuntimeParams["lock_timeout"] = "5000"
+	d := stdlib.OpenDB(*config)
+	d.SetMaxOpenConns(10)
+	d.SetMaxIdleConns(2)
+	d.SetConnMaxIdleTime(5 * time.Minute)
+	d.SetConnMaxLifetime(30 * time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err = d.PingContext(ctx); err != nil {
+		d.Close()
+		return nil, fmt.Errorf("PostgreSQL connection failed: %w", err)
 	}
-	u := url.URL{Scheme: "file", Path: abs}
-	q := u.Query()
-	q.Set("_foreign_keys", "on")
-	q.Set("_journal_mode", "WAL")
-	q.Set("_busy_timeout", "5000")
-	q.Set("_synchronous", "FULL")
-	u.RawQuery = q.Encode()
-	d, err := sql.Open("sqlite3", u.String())
-	if err != nil {
-		return nil, err
-	}
-	d.SetMaxOpenConns(1)
-	d.SetMaxIdleConns(1)
 	s := &Store{SQL: d}
-	if err = d.Ping(); err == nil {
-		err = s.migrate()
-	}
-	if err != nil {
+	if err = s.migrate(); err != nil {
 		d.Close()
 		return nil, err
 	}
@@ -82,12 +83,21 @@ func Open(path string) (*Store, error) {
 }
 func (s *Store) Close() error { return s.SQL.Close() }
 func (s *Store) migrate() error {
-	tx, err := s.SQL.Begin()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tx, err := s.SQL.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec("CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"); err != nil {
+	if _, err = tx.ExecContext(ctx, "SET LOCAL statement_timeout='30s'"); err != nil {
+		return err
+	}
+	// One transaction-scoped lock prevents two server starts applying the same DDL.
+	if _, err = tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(824009201)"); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)"); err != nil {
 		return err
 	}
 	entries, err := migrations.ReadDir("migrations")
@@ -99,21 +109,21 @@ func (s *Store) migrate() error {
 		if err != nil {
 			return err
 		}
-		var exists int
-		if err = tx.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=?", v).Scan(&exists); err != nil {
+		var exists bool
+		if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)", v).Scan(&exists); err != nil {
 			return err
 		}
-		if exists != 0 {
+		if exists {
 			continue
 		}
-		data, err := migrations.ReadFile("migrations/" + entry.Name())
+		script, err := migrations.ReadFile("migrations/" + entry.Name())
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(string(data)); err != nil {
+		if _, err = tx.ExecContext(ctx, string(script)); err != nil {
 			return fmt.Errorf("migration %d: %w", v, err)
 		}
-		if _, err = tx.Exec("INSERT INTO schema_migrations(version) VALUES(?)", v); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO schema_migrations(version) VALUES($1)", v); err != nil {
 			return err
 		}
 	}
@@ -125,20 +135,17 @@ func (s *Store) Register(ctx context.Context, login, hash, profile string, words
 		return Player{}, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, "INSERT INTO players(login,password_hash,profile) VALUES(?,?,?)", strings.TrimSpace(login), hash, profile)
+	var id int64
+	err = tx.QueryRowContext(ctx, "INSERT INTO players(login,password_hash,profile) VALUES($1,$2,$3) RETURNING id", strings.TrimSpace(login), hash, profile).Scan(&id)
 	if err != nil {
-		var se sqlite3.Error
-		if errors.As(err, &se) && se.ExtendedCode == sqlite3.ErrConstraintUnique {
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && pg.Code == "23505" && pg.ConstraintName == "players_login_key" {
 			return Player{}, ErrLoginTaken
 		}
 		return Player{}, err
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return Player{}, err
-	}
-	for _, w := range words {
-		if _, err = tx.ExecContext(ctx, "INSERT INTO known_words(player_id,word_id) VALUES(?,?)", id, w); err != nil {
+	for _, word := range words {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO known_words(player_id,word_id) VALUES($1,$2)", id, word); err != nil {
 			return Player{}, err
 		}
 	}
@@ -155,13 +162,13 @@ func scanPlayer(row *sql.Row) (p Player, err error) {
 	return
 }
 func (s *Store) Player(ctx context.Context, id int64) (Player, error) {
-	return scanPlayer(s.SQL.QueryRowContext(ctx, "SELECT "+playerCols+" FROM players WHERE id=?", id))
+	return scanPlayer(s.SQL.QueryRowContext(ctx, "SELECT "+playerCols+" FROM players WHERE id=$1", id))
 }
 func (s *Store) ByLogin(ctx context.Context, login string) (Player, error) {
-	return scanPlayer(s.SQL.QueryRowContext(ctx, "SELECT "+playerCols+" FROM players WHERE login=?", strings.TrimSpace(login)))
+	return scanPlayer(s.SQL.QueryRowContext(ctx, "SELECT "+playerCols+" FROM players WHERE login=$1", strings.TrimSpace(login)))
 }
-func (s *Store) SavePositions(ctx context.Context, ps []Player) error {
-	if len(ps) == 0 {
+func (s *Store) SavePositions(ctx context.Context, players []Player) error {
+	if len(players) == 0 {
 		return nil
 	}
 	tx, err := s.SQL.BeginTx(ctx, nil)
@@ -169,47 +176,50 @@ func (s *Store) SavePositions(ctx context.Context, ps []Player) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, p := range ps {
-		if _, err = tx.ExecContext(ctx, "UPDATE players SET pos_x=?,pos_z=?,rotation=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", p.X, p.Z, p.Rotation, p.ID); err != nil {
+	players = append([]Player{}, players...)
+	sort.Slice(players, func(i, j int) bool { return players[i].ID < players[j].ID })
+	// Lock multiple wallets in ID order during position flushes.
+	for _, p := range players {
+		if _, err = tx.ExecContext(ctx, "UPDATE players SET pos_x=$1,pos_z=$2,rotation=$3,updated_at=CURRENT_TIMESTAMP WHERE id=$4", p.X, p.Z, p.Rotation, p.ID); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 func (s *Store) Words(ctx context.Context, id int64) ([]string, error) {
-	rows, err := s.SQL.QueryContext(ctx, "SELECT word_id FROM known_words WHERE player_id=? ORDER BY word_id", id)
+	rows, err := s.SQL.QueryContext(ctx, "SELECT word_id FROM known_words WHERE player_id=$1 ORDER BY word_id", id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []string{}
 	for rows.Next() {
-		var w string
-		if err = rows.Scan(&w); err != nil {
+		var word string
+		if err = rows.Scan(&word); err != nil {
 			return nil, err
 		}
-		out = append(out, w)
+		out = append(out, word)
 	}
 	return out, rows.Err()
 }
 func (s *Store) Inventory(ctx context.Context, id int64) ([]Item, error) {
-	rows, err := s.SQL.QueryContext(ctx, "SELECT item_id,price_paid FROM inventory WHERE player_id=? ORDER BY item_id", id)
+	rows, err := s.SQL.QueryContext(ctx, "SELECT item_id,price_paid FROM inventory WHERE player_id=$1 ORDER BY item_id", id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []Item{}
 	for rows.Next() {
-		var i Item
-		if err = rows.Scan(&i.ID, &i.PricePaid); err != nil {
+		var item Item
+		if err = rows.Scan(&item.ID, &item.PricePaid); err != nil {
 			return nil, err
 		}
-		out = append(out, i)
+		out = append(out, item)
 	}
 	return out, rows.Err()
 }
 func (s *Store) Learn(ctx context.Context, id int64, word string) (bool, error) {
-	res, err := s.SQL.ExecContext(ctx, "INSERT INTO known_words(player_id,word_id) VALUES(?,?) ON CONFLICT(player_id,word_id) DO NOTHING", id, word)
+	res, err := s.SQL.ExecContext(ctx, "INSERT INTO known_words(player_id,word_id) VALUES($1,$2) ON CONFLICT(player_id,word_id) DO NOTHING", id, word)
 	if err != nil {
 		return false, err
 	}
@@ -217,24 +227,24 @@ func (s *Store) Learn(ctx context.Context, id int64, word string) (bool, error) 
 	return n > 0, err
 }
 func (s *Store) Relation(ctx context.Context, id int64, npc string, price, floor int) (Relation, error) {
-	_, err := s.SQL.ExecContext(ctx, "INSERT INTO npc_relations(npc_id,player_id,current_price,price_floor) VALUES(?,?,?,?) ON CONFLICT(npc_id,player_id) DO NOTHING", npc, id, price, floor)
+	_, err := s.SQL.ExecContext(ctx, "INSERT INTO npc_relations(npc_id,player_id,current_price,price_floor) VALUES($1,$2,$3,$4) ON CONFLICT(npc_id,player_id) DO NOTHING", npc, id, price, floor)
 	if err != nil {
 		return Relation{}, err
 	}
 	r := Relation{NPCID: npc, PlayerID: id}
-	var history string
-	err = s.SQL.QueryRowContext(ctx, "SELECT state,mianzi,aggro,current_price,price_floor,history_json FROM npc_relations WHERE npc_id=? AND player_id=?", npc, id).Scan(&r.State, &r.Mianzi, &r.Aggro, &r.Price, &r.Floor, &history)
+	var history []byte
+	err = s.SQL.QueryRowContext(ctx, "SELECT state,mianzi,aggro,current_price,price_floor,history_json FROM npc_relations WHERE npc_id=$1 AND player_id=$2", npc, id).Scan(&r.State, &r.Mianzi, &r.Aggro, &r.Price, &r.Floor, &history)
 	if err != nil {
 		return r, err
 	}
-	err = json.Unmarshal([]byte(history), &r.History)
+	err = json.Unmarshal(history, &r.History)
 	return r, err
 }
 func (s *Store) SaveRelation(ctx context.Context, r Relation) error {
-	b, err := json.Marshal(r.History)
+	history, err := json.Marshal(r.History)
 	if err != nil {
 		return err
 	}
-	_, err = s.SQL.ExecContext(ctx, "UPDATE npc_relations SET state=?,mianzi=?,aggro=?,current_price=?,price_floor=?,history_json=?,updated_at=CURRENT_TIMESTAMP WHERE npc_id=? AND player_id=?", r.State, r.Mianzi, r.Aggro, r.Price, r.Floor, string(b), r.NPCID, r.PlayerID)
+	_, err = s.SQL.ExecContext(ctx, "UPDATE npc_relations SET state=$1,mianzi=$2,aggro=$3,current_price=$4,price_floor=$5,history_json=$6::jsonb,updated_at=CURRENT_TIMESTAMP WHERE npc_id=$7 AND player_id=$8", r.State, r.Mianzi, r.Aggro, r.Price, r.Floor, string(history), r.NPCID, r.PlayerID)
 	return err
 }

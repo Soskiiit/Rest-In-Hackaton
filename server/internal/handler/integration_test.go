@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"hackaton/server/internal/testdb"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -124,7 +124,7 @@ func errorCode(t *testing.T, c *websocket.Conn, want string) {
 	}
 }
 func TestAuthAndOrigin(t *testing.T) {
-	f := start(t, filepath.Join(t.TempDir(), "game.db"), "http://127.0.0.1:1")
+	f := start(t, testdb.New(t), "http://127.0.0.1:1")
 	token := account(t, f, " alice ", "business")
 	post(t, f, "/auth/register", map[string]string{"login": "alice", "password": "password123"}, 409)
 	post(t, f, "/auth/login", map[string]string{"login": "alice", "password": "incorrect"}, 401)
@@ -200,7 +200,7 @@ func TestMultiplayerAIQuizAndRestart(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"raw": "", "parsed": reply})
 	}))
 	defer aiServer.Close()
-	path := filepath.Join(t.TempDir(), "game.db")
+	path := testdb.New(t)
 	f := start(t, path, aiServer.URL)
 	tokenA := account(t, f, "alice", "business")
 	tokenB := account(t, f, "boris", "culture")
@@ -219,13 +219,13 @@ func TestMultiplayerAIQuizAndRestart(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("AI did not start")
 	}
-	// Neither live movement nor SQLite may be held while waiting for inference.
+	// Neither live movement nor a database connection may be held while waiting for inference.
 	send(t, b, "MOVE", map[string]any{"x": 111, "z": 110, "rotation": 1})
 	until(t, a, "PLAYER_MOVE")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if _, err = f.store.Words(ctx, 1); err != nil {
-		t.Fatalf("AI held SQLite: %v", err)
+		t.Fatalf("AI held the database: %v", err)
 	}
 	unblock()
 	var speechA, speechB hub.Speech
@@ -350,7 +350,7 @@ func TestMultiplayerAIQuizAndRestart(t *testing.T) {
 	}
 }
 func TestUnavailableAIUsesFallback(t *testing.T) {
-	f := start(t, filepath.Join(t.TempDir(), "game.db"), "http://127.0.0.1:1")
+	f := start(t, testdb.New(t), "http://127.0.0.1:1")
 	c := dial(t, f, account(t, f, "alice", "business"))
 	until(t, c, "WELCOME")
 	until(t, c, "WORLD_STATS")
@@ -363,7 +363,7 @@ func TestUnavailableAIUsesFallback(t *testing.T) {
 }
 
 func TestPeriodicAndDisconnectPositionSave(t *testing.T) {
-	f := start(t, filepath.Join(t.TempDir(), "game.db"), "http://127.0.0.1:1")
+	f := start(t, testdb.New(t), "http://127.0.0.1:1")
 	a := dial(t, f, account(t, f, "alice", "business"))
 	until(t, a, "WELCOME")
 	until(t, a, "WORLD_STATS")
@@ -399,7 +399,7 @@ func TestPeriodicAndDisconnectPositionSave(t *testing.T) {
 }
 
 func TestInspectableItemArrivesInAOI(t *testing.T) {
-	f := start(t, filepath.Join(t.TempDir(), "game.db"), "http://127.0.0.1:1")
+	f := start(t, testdb.New(t), "http://127.0.0.1:1")
 	c := dial(t, f, account(t, f, "alice", "business"))
 	until(t, c, "WELCOME")
 	raw := until(t, c, "CHUNK_LOAD")

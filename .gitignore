@@ -6,6 +6,7 @@ venv/
 .agents/
 # DEV-A local runtime and build outputs
 server/data/
+server/backups/
 server/bin/
 server/.env
 __pycache__/
