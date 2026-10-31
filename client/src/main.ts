@@ -233,7 +233,7 @@ class Application {
   private bindInputAndPointerLock(): void {
     // Clicking instructions blocker engages PointerLock
     this.blockerEl.addEventListener('click', () => {
-      if (!this.isModalActive) {
+      if (!this.isModalActive && !this.dialogueUI?.isOpen() && !this.quizPanel?.isOpen()) {
         this.playerController.requestPointerLock();
       }
     });
@@ -243,7 +243,7 @@ class Application {
     });
 
     this.playerController.onUnlock(() => {
-      if (!this.isModalActive) {
+      if (!this.isModalActive && !this.dialogueUI?.isOpen() && !this.quizPanel?.isOpen()) {
         this.blockerEl.classList.remove('hidden');
       }
     });
@@ -300,7 +300,9 @@ class Application {
       this.blockerEl.classList.add('hidden');
     } else {
       // Re-enable pointer lock prompt if needed
-      this.blockerEl.classList.remove('hidden');
+      if (!this.dialogueUI?.isOpen() && !this.quizPanel?.isOpen()) {
+        this.blockerEl.classList.remove('hidden');
+      }
     }
   }
 
