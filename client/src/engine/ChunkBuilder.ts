@@ -286,9 +286,7 @@ export class ChunkBuilder {
       const landmarkGroup = this.buildLaoWangLandmark(opts);
       chunkGroup.add(landmarkGroup);
 
-      // Add building facades and overhead lanterns to chunk 5_5 as well so walls don't disappear around Lao Wang!
-      const streetAtmosphere = this.generateStreetFacadesAndOverhead(opts);
-      chunkGroup.add(streetAtmosphere);
+      // Central Plaza (Spawn area): Keep it an open bazaar square without black walls blocking the player!
     } else {
       // Procedural Night Market Generation
       const seed = (cx * 73856093) ^ (cz * 19349663) ^ 0x9e3779b9;

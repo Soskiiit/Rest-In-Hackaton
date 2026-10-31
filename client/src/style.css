@@ -8,10 +8,10 @@
   --bg-card: rgba(16, 12, 28, 0.88);
   --bg-card-hover: rgba(26, 18, 44, 0.95);
   --border-neon-cyan: rgba(0, 243, 255, 0.35);
-  --border-neon-cyan-bright: #00f3ff;
+  --border-neon-cyan-bright: #c5f1f4;
 
-  --neon-cyan: #00f3ff;
-  --neon-magenta: #ff007f;
+  --neon-cyan: #95d8dc;
+  --neon-magenta: #00b611;
   --neon-amber: #ffaa00;
   --neon-green: #00ff88;
   --neon-red: #ff3344;
@@ -25,7 +25,7 @@
   --font-main: 'Inter', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 
   --glow-cyan: 0 0 12px rgba(0, 243, 255, 0.5);
-  --glow-magenta: 0 0 14px rgba(255, 0, 127, 0.6);
+  --glow-magenta: 0 0 14px #2dff41;
   --glow-amber: 0 0 12px rgba(255, 170, 0, 0.5);
   --glow-green: 0 0 10px rgba(0, 255, 136, 0.6);
 }
@@ -590,7 +590,7 @@ html, body {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(6, 3, 12, 0.88);
+  background: rgba(6, 3, 12, 0.7);
   backdrop-filter: blur(14px);
   display: flex;
   justify-content: center;
@@ -601,26 +601,28 @@ html, body {
 
 .instructions-card {
   width: min(640px, 92vw);
-  background: var(--bg-card);
+  background: rgba(16, 12, 28, 0.72);
   border: 1px solid var(--neon-cyan);
   border-radius: 14px;
   padding: 32px 36px;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.9), var(--glow-cyan);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.75), var(--glow-cyan);
+  backdrop-filter: blur(10px);
   text-align: center;
 }
 
 .cyber-badge {
   display: inline-block;
   padding: 3px 10px;
-  background: rgba(0, 243, 255, 0.12);
-  border: 1px solid var(--neon-cyan);
+  background: rgba(0, 255, 136, 0.15);
+  border: 1px solid var(--neon-green);
   border-radius: 20px;
-  color: var(--neon-cyan);
+  color: var(--neon-green);
   font-family: var(--font-mono);
   font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 1.5px;
   margin-bottom: 14px;
+  box-shadow: 0 0 10px rgba(0, 255, 136, 0.35);
 }
 
 .game-title {
@@ -634,7 +636,7 @@ html, body {
 .game-subtitle {
   font-size: 1.1rem;
   font-weight: 600;
-  color: var(--neon-amber);
+  color: var(--text-secondary);
   margin-top: 6px;
   letter-spacing: 1px;
 }
@@ -643,9 +645,9 @@ html, body {
   margin: 28px 0;
   font-size: 1.15rem;
   font-weight: 800;
-  color: var(--neon-magenta);
+  color: var(--neon-green);
   letter-spacing: 1.5px;
-  animation: pulse-glow 1.6s infinite ease-in-out;
+  animation: pulse-glow-green 1.6s infinite ease-in-out;
 }
 
 .controls-guide {
@@ -719,16 +721,16 @@ html, body {
   }
 }
 
-@keyframes pulse-glow {
+@keyframes pulse-glow-green {
   0%, 100% {
-    opacity: 0.8;
+    opacity: 0.85;
     transform: scale(1);
-    text-shadow: 0 0 10px rgba(255, 0, 127, 0.4);
+    text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
   }
   50% {
     opacity: 1;
     transform: scale(1.02);
-    text-shadow: 0 0 20px rgba(255, 0, 127, 0.9);
+    text-shadow: 0 0 22px rgba(0, 255, 136, 0.95), 0 0 35px rgba(0, 255, 136, 0.6);
   }
 }
 
