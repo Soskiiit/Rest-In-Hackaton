@@ -172,10 +172,22 @@ export class World {
             const clonedGeo = child.geometry.clone();
             clonedGeo.applyMatrix4(child.matrixWorld);
             geometries.push(clonedGeo);
-            if (Array.isArray(child.material)) {
-              materials.push(...child.material);
-            } else if (child.material) {
-              materials.push(child.material);
+
+            const srcMats = Array.isArray(child.material) ? child.material : [child.material];
+            for (const mat of srcMats) {
+              if (mat) {
+                const clonedMat = mat.clone() as THREE.MeshStandardMaterial;
+                // Tint to a lighter grey based on material name or order
+                if (mat.name === 'Stone_Light') {
+                  clonedMat.color.setHex(SCENE_COLORS.stoneTileLightColor);
+                } else if (mat.name === 'Stone_Dark') {
+                  clonedMat.color.setHex(SCENE_COLORS.stoneTileDarkColor);
+                } else {
+                  clonedMat.color.setHex(SCENE_COLORS.stoneTileLightColor);
+                }
+                clonedMat.roughness = 0.85;
+                materials.push(clonedMat);
+              }
             }
           }
         });
