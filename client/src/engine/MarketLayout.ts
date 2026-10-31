@@ -156,6 +156,18 @@ export class MarketLayout {
       { x: 78.5, z: 125.0, width: 5.0, depth: 38.0, height: wallH },  // west plaza wall
       { x: 121.5, z: 125.0, width: 5.0, depth: 38.0, height: wallH }, // east plaza wall
       { x: 100.0, z: 147.5, width: 44.0, depth: 5.0, height: wallH }, // north back wall
+
+      // 5. Outer Perimeter Fortress Walls (matching user diagram yellow rectangles)
+      // North outer wall across top (Z=180, X from 20 to 180)
+      { x: 100.0, z: 180.0, width: 164.0, depth: 4.0, height: wallH },
+      // West outer wall (X=20, Z from 22 to 180)
+      { x: 20.0, z: 101.0, width: 4.0, depth: 160.0, height: wallH },
+      // East outer wall (X=180, Z from 22 to 180)
+      { x: 180.0, z: 101.0, width: 4.0, depth: 160.0, height: wallH },
+      // South-West outer wall with entrance gate gap (Z=22, X from 20 to 95)
+      { x: 57.5, z: 22.0, width: 75.0, depth: 4.0, height: wallH },
+      // South-East outer wall with entrance gate gap (Z=22, X from 105 to 180)
+      { x: 142.5, z: 22.0, width: 75.0, depth: 4.0, height: wallH },
     ];
   }
 
@@ -211,6 +223,13 @@ export class MarketLayout {
       );
       root.add(stallMesh);
     }
+
+    // 3. Central Lao Wang Pavilion Landmark Stall at pink square in North Plaza (x=100, z=124)
+    const centralPavilion = ChunkBuilder.buildLaoWangLandmark();
+    // Central pavilion faces South towards player entering the north plaza
+    centralPavilion.position.set(100.0, 0, 124.0);
+    centralPavilion.rotation.y = 0;
+    root.add(centralPavilion);
 
     return root;
   }

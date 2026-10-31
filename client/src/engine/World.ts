@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ChunkStreamer } from './ChunkStreamer';
@@ -115,11 +114,11 @@ export class World {
     // 6. Atmospheric night market lanterns
     this.initMarketLanterns();
 
-    // 6.1 Custom Arch model at street entrance
-    this.initArchModel();
-
     // 6.2 Custom Market Layout (Streets, Plazas & Walls matching blueprint)
     this.initCustomMarketLayout();
+
+    // 6.3 Animated / Populated NPCs behind market stalls and in plazas
+    this.initMarketNpcs();
 
     // 7. Dynamic Chunk Streamer (10x10 grid, AoI <= 9 chunks)
     this.initChunkStreamer();
@@ -330,47 +329,8 @@ export class World {
   /**
    * Loads the custom arch OBJ model and places it majestically at the street entrance near spawn.
    */
-  private initArchModel(): void {
-    const loader = new OBJLoader();
-    loader.load(
-      '/models/arch.obj',
-      (obj) => {
-        // Compute bounding box to normalize scale
-        const box = new THREE.Box3().setFromObject(obj);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const maxDim = Math.max(size.x, size.y, size.z);
-        
-        // Target height ~5.5 meters over the street
-        const scale = maxDim > 0 ? 5.5 / maxDim : 4.0;
-        obj.scale.set(scale, scale, scale);
-
-        // Position over the entrance avenue right at the beginning of the street
-        obj.position.set(100, 0, 64);
-        obj.rotation.y = 0;
-
-        obj.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            if (!child.material || (Array.isArray(child.material) && child.material.length === 0)) {
-              child.material = new THREE.MeshStandardMaterial({
-                color: 0xcc2229, // Traditional Chinese Vermilion
-                roughness: 0.5,
-                metalness: 0.2,
-              });
-            }
-          }
-        });
-
-        this.scene.add(obj);
-        console.log('[World] Custom arch model successfully loaded and added to scene.');
-      },
-      undefined,
-      (err) => {
-        console.warn('[World] Could not load /models/arch.obj:', err);
-      }
-    );
+  public initArchModel(): void {
+    // Arch removed per user request
   }
 
   /**
@@ -380,6 +340,100 @@ export class World {
   private initCustomMarketLayout(): void {
     const layoutGroup = MarketLayout.buildLayoutGroup();
     this.scene.add(layoutGroup);
+  }
+
+  /**
+   * Populates NPCs behind the market stalls across all avenues and plazas.
+   */
+  private initMarketNpcs(): void {
+    const stalls = MarketLayout.getStalls();
+    const loader = new GLTFLoader();
+
+    loader.load(
+      '/models/npc_vendor.glb',
+      (gltf) => {
+        gltf.scene.updateMatrixWorld(true);
+        const geometries: THREE.BufferGeometry[] = [];
+        const materials: THREE.Material[] = [];
+
+        gltf.scene.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            const clonedGeo = child.geometry.clone();
+            clonedGeo.applyMatrix4(child.matrixWorld);
+            geometries.push(clonedGeo);
+            if (Array.isArray(child.material)) {
+              materials.push(...child.material);
+            } else if (child.material) {
+              materials.push(child.material);
+            }
+          }
+        });
+
+        if (geometries.length === 0) return;
+
+        const mergedGeo = BufferGeometryUtils.mergeGeometries(geometries, true);
+        if (!mergedGeo) return;
+
+        // Center NPC geometry at feet
+        mergedGeo.computeBoundingBox();
+        const box = mergedGeo.boundingBox!;
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        mergedGeo.translate(-center.x, -box.min.y, -center.z);
+
+        // Normalize height to realistic human stature (~1.72m)
+        const height = box.max.y - box.min.y;
+        const scale = 1.72 / height;
+        mergedGeo.scale(scale, scale, scale);
+
+        // Filter stalls to spawn NPCs at every stall except near Lao Wang landmark (110, 109.5)
+        const vendorPositions: Array<{ x: number; z: number; rotY: number }> = [];
+        for (const stall of stalls) {
+          // Check distance to Lao Wang landmark so we do not duplicate
+          const distToLaoWang = Math.hypot(stall.x - 110.0, stall.z - 109.5);
+          if (distToLaoWang < 4.0) continue;
+
+          // Compute position behind counter: counter faces rotY direction, vendor stands behind it
+          // In Three.js, stall forward is rotY, so "behind" is offset by -0.85m in facing direction
+          const facingAngle = stall.rotY;
+          // Offset vector behind the counter
+          const offsetX = -Math.sin(facingAngle) * 0.95;
+          const offsetZ = -Math.cos(facingAngle) * 0.95;
+
+          vendorPositions.push({
+            x: stall.x + offsetX,
+            z: stall.z + offsetZ,
+            rotY: facingAngle, // faces forward over the counter towards the street
+          });
+        }
+
+        const totalNpcs = vendorPositions.length;
+        const instancedMesh = new THREE.InstancedMesh(
+          mergedGeo,
+          materials.length === 1 ? materials[0] : materials,
+          totalNpcs
+        );
+        instancedMesh.receiveShadow = true;
+        instancedMesh.castShadow = true;
+
+        const dummy = new THREE.Object3D();
+        for (let i = 0; i < totalNpcs; i++) {
+          const vp = vendorPositions[i];
+          dummy.position.set(vp.x, 0.02, vp.z);
+          dummy.rotation.set(0, vp.rotY, 0);
+          dummy.updateMatrix();
+          instancedMesh.setMatrixAt(i, dummy.matrix);
+        }
+
+        instancedMesh.instanceMatrix.needsUpdate = true;
+        this.scene.add(instancedMesh);
+        console.log(`[World] Successfully populated ${totalNpcs} vendor NPCs throughout the market!`);
+      },
+      undefined,
+      (err) => {
+        console.warn('[World] Could not load NPC vendor model /models/npc_vendor.glb:', err);
+      }
+    );
   }
 
   /**
