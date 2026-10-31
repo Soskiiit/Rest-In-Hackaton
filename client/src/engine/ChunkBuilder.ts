@@ -510,6 +510,88 @@ export class ChunkBuilder {
     return group;
   }
 
+  // Cached shared wood plank texture for counters
+  private static woodTexture: THREE.CanvasTexture | null = null;
+
+  /**
+   * Generates a subtle, semi-transparent wood grain and plank texture for stalls.
+   */
+  public static getWoodTexture(): THREE.Texture | null {
+    if (this.woodTexture) {
+      return this.woodTexture;
+    }
+
+    if (typeof document === 'undefined') {
+      return null;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    // 1. Base wood tone (matching tentBaseColor #ccae72)
+    ctx.fillStyle = '#ccae72';
+    ctx.fillRect(0, 0, 512, 512);
+
+    const planks = 8;
+    const plankHeight = 512 / planks; // 64px per horizontal plank
+
+    // 2. Soft horizontal wood grain lines and plank variations
+    for (let p = 0; p < planks; p++) {
+      const y = p * plankHeight;
+
+      // Slight plank shade variation (semi-transparent)
+      const shade = (Math.sin(p * 45.3) * 0.5 + 0.5);
+      if (shade > 0.5) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.02 + (shade - 0.5) * 0.04})`;
+      } else {
+        ctx.fillStyle = `rgba(0, 0, 0, ${0.03 + shade * 0.05})`;
+      }
+      ctx.fillRect(0, y, 512, plankHeight);
+
+      // Fine organic wood grain streaks
+      for (let g = 0; g < 6; g++) {
+        const streakY = y + (g + 0.5) * (plankHeight / 6) + (Math.sin(g * 12.4) * 2);
+        ctx.strokeStyle = (g % 2 === 0) ? 'rgba(70, 45, 20, 0.08)' : 'rgba(255, 255, 255, 0.05)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(0, streakY);
+        // Subtle wave along the grain
+        ctx.bezierCurveTo(
+          128, streakY + Math.sin(p + g) * 3,
+          384, streakY - Math.sin(p - g) * 3,
+          512, streakY
+        );
+        ctx.stroke();
+      }
+
+      // Plank separator groove (dark thin seam)
+      ctx.strokeStyle = 'rgba(40, 25, 10, 0.25)';
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(512, y);
+      ctx.stroke();
+
+      // Top edge highlight for bevel
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.lineWidth = 1.0;
+      ctx.beginPath();
+      ctx.moveTo(0, y + 2);
+      ctx.lineTo(512, y + 2);
+      ctx.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(2, 2);
+
+    this.woodTexture = texture;
+    return texture;
+  }
+
   /**
    * Builds an individual market stall (counter box, corner poles, cloth canopy, props, lantern).
    */
@@ -524,13 +606,19 @@ export class ChunkBuilder {
       stall.rotation.y = config.rotationY;
     }
 
-    // 1. Counter Base (Wooden cabinet)
+    const woodTex = this.getWoodTexture();
+
+    // 1. Counter Base (Wooden cabinet with soft wood plank texture)
     const baseGeo = new THREE.BoxGeometry(3.0, 0.85, 1.2);
-    const baseMat = new THREE.MeshStandardMaterial({
-      color: SCENE_COLORS.tentBaseColor,
+    const baseMatConfig: THREE.MeshStandardMaterialParameters = {
+      color: woodTex ? 0xffffff : SCENE_COLORS.tentBaseColor,
       roughness: 0.75,
-      metalness: 0.1,
-    });
+      metalness: 0.08,
+    };
+    if (woodTex) {
+      baseMatConfig.map = woodTex;
+    }
+    const baseMat = new THREE.MeshStandardMaterial(baseMatConfig);
     const baseMesh = new THREE.Mesh(baseGeo, baseMat);
     baseMesh.position.y = 0.85 / 2;
     baseMesh.castShadow = opts.enableShadows ?? true;
@@ -538,13 +626,17 @@ export class ChunkBuilder {
     baseMesh.userData = { isWall: true, isStall: true };
     stall.add(baseMesh);
 
-    // 2. Counter Top (Slightly larger tabletop)
+    // 2. Counter Top (Slightly larger tabletop with matching wood texture)
     const topGeo = new THREE.BoxGeometry(3.2, 0.08, 1.4);
-    const topMat = new THREE.MeshStandardMaterial({
-      color: SCENE_COLORS.tentBaseColor,
+    const topMatConfig: THREE.MeshStandardMaterialParameters = {
+      color: woodTex ? 0xffffff : SCENE_COLORS.tentBaseColor,
       roughness: 0.6,
-      metalness: 0.15,
-    });
+      metalness: 0.12,
+    };
+    if (woodTex) {
+      topMatConfig.map = woodTex;
+    }
+    const topMat = new THREE.MeshStandardMaterial(topMatConfig);
     const topMesh = new THREE.Mesh(topGeo, topMat);
     topMesh.position.y = 0.85 + 0.04;
     topMesh.castShadow = opts.enableShadows ?? true;

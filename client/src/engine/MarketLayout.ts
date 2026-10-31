@@ -232,7 +232,11 @@ export class MarketLayout {
   /**
    * Generates a soft, subtle semi-transparent brick pattern overlay on top of the solid wall color.
    */
-  public static createBrickTexture(): THREE.CanvasTexture {
+  public static createBrickTexture(): THREE.Texture | null {
+    if (typeof document === 'undefined') {
+      return null;
+    }
+
     const canvas = document.createElement('canvas');
     canvas.width = 512;
     canvas.height = 512;
@@ -311,12 +315,15 @@ export class MarketLayout {
 
     const brickTexture = this.createBrickTexture();
 
-    const wallMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff, // Tinted by texture map
-      map: brickTexture,
+    const wallMatConfig: THREE.MeshStandardMaterialParameters = {
+      color: brickTexture ? 0xffffff : SCENE_COLORS.wallBrickColor,
       roughness: 0.85,
       metalness: 0.05,
-    });
+    };
+    if (brickTexture) {
+      wallMatConfig.map = brickTexture;
+    }
+    const wallMat = new THREE.MeshStandardMaterial(wallMatConfig);
 
     const roofTileMat = new THREE.MeshStandardMaterial({
       color: 0x3d3a45,
