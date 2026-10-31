@@ -283,7 +283,7 @@ export class ChunkBuilder {
     // 2. Build Stalls, Props, Lanterns, or Landmark
     if (isLandmark) {
       // Chunk 5_5 Landmark: Lao Wang's Antique Pavilion & NPC Avatar Marker
-      const landmarkGroup = this.buildLaoWangLandmark(opts);
+      const landmarkGroup = this.buildLaoWangLandmark(opts, true);
       chunkGroup.add(landmarkGroup);
     } else {
       // Procedural Night Market Generation
@@ -886,7 +886,7 @@ export class ChunkBuilder {
    * Landmark: Chunk 5_5 Lao Wang Pavilion & Avatar Marker.
    * Prominent central landmark in the night market.
    */
-  public static buildLaoWangLandmark(opts: ChunkBuilderOptions = DEFAULT_CHUNK_OPTIONS): THREE.Group {
+  public static buildLaoWangLandmark(opts: ChunkBuilderOptions = DEFAULT_CHUNK_OPTIONS, includeAvatar: boolean = false): THREE.Group {
     const landmark = new THREE.Group();
     landmark.name = 'lao_wang_landmark';
     // Positioned in center of chunk (x=10, z=10), facing South towards player spawn (100, 100)
@@ -1009,10 +1009,12 @@ export class ChunkBuilder {
     jadePlaque.position.set(0.8, 0.25 + 0.9 + 0.03, 0.3);
     landmark.add(jadePlaque);
 
-    // 8. Lao Wang 3D Avatar Marker (Standing behind counter at z = -0.65)
-    const npcAvatar = this.buildLaoWangAvatar();
-    npcAvatar.position.set(0, 0.25, -0.65);
-    landmark.add(npcAvatar);
+    // 8. Lao Wang 3D Avatar Marker (only if requested or in tests)
+    if (includeAvatar) {
+      const npcAvatar = this.buildLaoWangAvatar();
+      npcAvatar.position.set(0, 0.25, -0.65);
+      landmark.add(npcAvatar);
+    }
 
     // 9. Two Grand Imperial Lanterns with warm illumination
     const lanternLeft = this.buildLantern(

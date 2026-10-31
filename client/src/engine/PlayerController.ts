@@ -16,6 +16,7 @@ export interface PlayerControllerConfig {
   playerRadius: number;
   damping: number; // friction/damping factor
   spawnPosition: { x: number; y: number; z: number };
+  spawnYaw?: number; // initial yaw rotation in radians
   jumpSpeed?: number;
   gravity?: number;
 }
@@ -33,6 +34,7 @@ export const DEFAULT_PLAYER_CONFIG: PlayerControllerConfig = {
   playerRadius: 0.5,
   damping: 12.0,
   spawnPosition: { x: 100, y: 0, z: 66 },
+  spawnYaw: 0, // Faces North into the market corridor (+Z towards crossroads and plazas)
   jumpSpeed: 7.5,
   gravity: 20.0,
 };
@@ -83,9 +85,10 @@ export class PlayerController {
       this.config.spawnPosition.z
     );
 
-    // Initial camera position & orientation
+    // Initial camera position & orientation (spawnYaw allows 180 deg turnaround)
     this.camera.position.set(this.position.x, this.position.y + this.config.eyeHeight, this.position.z);
-    this.euler.setFromQuaternion(this.camera.quaternion);
+    this.euler.set(0, this.config.spawnYaw ?? 0, 0, 'YXZ');
+    this.camera.quaternion.setFromEuler(this.euler);
 
     // Bind event listeners
     this.bindEvents();

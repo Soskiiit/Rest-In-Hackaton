@@ -350,10 +350,19 @@ export class World {
     const stalls = MarketLayout.getStalls();
 
     // Stalls to populate (excluding the central landmark area)
+    // Deterministic pseudo-random selection (~60% stalls have an active vendor, ~40% are empty as if vendor stepped away)
     const vendorPositions: Array<{ x: number; z: number; rotY: number }> = [];
     for (const stall of stalls) {
       const distToLaoWang = Math.hypot(stall.x - 100.0, stall.z - 124.0);
       if (distToLaoWang < 3.5) continue;
+
+      // Consistent seed hash for this stall location
+      const hash = Math.sin(stall.x * 12.9898 + stall.z * 78.233) * 43758.5453;
+      const randVal = hash - Math.floor(hash);
+      // Skip vendor on ~40% of stalls so some counters remain empty
+      if (randVal < 0.38) {
+        continue;
+      }
 
       const facingAngle = stall.rotY;
       // Stalls face with canopy tilted forward towards customer side (+Z)
@@ -382,8 +391,10 @@ export class World {
       console.log(`[World] Successfully loaded vendor GLB models! Populating ${vendorPositions.length} stalls...`);
 
       // Spawn Lao Wang at his central antique pavilion stall (100.0, 0, 124.0)
+      // Pavilion center is (100.0, 124.0), counter is at z = 124.3 (extends to z=124.95), platform is from 122.2 to 125.8
+      // Position Lao Wang comfortably on the other side of the counter at z = 125.55 (facing towards counter/South: rotY = Math.PI)
       const centralLaoWang = laoGltf.scene.clone(true);
-      centralLaoWang.position.set(100.0, 0.0, 124.65); // Other side of the counter, facing North (rotY = Math.PI)
+      centralLaoWang.position.set(100.0, 0.0, 125.55); // On the other side of the counter
       centralLaoWang.rotation.set(0, Math.PI, 0);
       centralLaoWang.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
