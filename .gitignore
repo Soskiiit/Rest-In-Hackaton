@@ -1,0 +1,6 @@
+.idea/
+.vscode/
+npm_packages/
+.venv/
+venv/
+.agents/
