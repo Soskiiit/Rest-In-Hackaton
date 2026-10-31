@@ -356,15 +356,15 @@ export class World {
       if (distToLaoWang < 3.5) continue;
 
       const facingAngle = stall.rotY;
-      // Stalls face inward (+Z locally is forward; rotY rotates stall)
-      // Vendors stand behind stall counter (+0.95m behind facing direction) and look forward (+rotY)
-      const offsetX = -Math.sin(facingAngle) * 0.95;
-      const offsetZ = -Math.cos(facingAngle) * 0.95;
+      // Stalls face with canopy tilted forward towards customer side (+Z)
+      // Vendors now stand on the other side of the counter (+0.95m forward) facing back towards the stall
+      const offsetX = Math.sin(facingAngle) * 0.95;
+      const offsetZ = Math.cos(facingAngle) * 0.95;
 
       vendorPositions.push({
         x: stall.x + offsetX,
         z: stall.z + offsetZ,
-        rotY: facingAngle,
+        rotY: facingAngle + Math.PI,
       });
     }
 
@@ -383,8 +383,8 @@ export class World {
 
       // Spawn Lao Wang at his central antique pavilion stall (100.0, 0, 124.0)
       const centralLaoWang = laoGltf.scene.clone(true);
-      centralLaoWang.position.set(100.0, 0.0, 123.35); // Behind the counter, facing South (rotY = 0)
-      centralLaoWang.rotation.set(0, 0, 0);
+      centralLaoWang.position.set(100.0, 0.0, 124.65); // Other side of the counter, facing North (rotY = Math.PI)
+      centralLaoWang.rotation.set(0, Math.PI, 0);
       centralLaoWang.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
           child.castShadow = true;
