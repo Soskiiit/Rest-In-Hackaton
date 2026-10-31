@@ -10,3 +10,8 @@ server/bin/
 server/.env
 __pycache__/
 *.pyc
+.DS_Store
+*.db
+# DEV-C
+node_modules/
+dist/
