@@ -238,8 +238,8 @@ export class MarketLayout {
     canvas.height = 512;
     const ctx = canvas.getContext('2d')!;
 
-    // 1. Base is the wall's red-brick terracotta color
-    ctx.fillStyle = '#8b3a2b';
+    // 1. Base is the wall's dark red-brick terracotta color
+    ctx.fillStyle = '#541e17';
     ctx.fillRect(0, 0, 512, 512);
 
     const rows = 16;
@@ -261,7 +261,7 @@ export class MarketLayout {
         if (rand > 0.5) {
           ctx.fillStyle = `rgba(255, 255, 255, ${0.02 + (rand - 0.5) * 0.04})`;
         } else {
-          ctx.fillStyle = `rgba(0, 0, 0, ${0.03 + rand * 0.04})`;
+          ctx.fillStyle = `rgba(0, 0, 0, ${0.04 + rand * 0.06})`;
         }
 
         ctx.fillRect(x + mortarGap / 2, y, brickWidth - mortarGap, h);
@@ -269,7 +269,7 @@ export class MarketLayout {
     }
 
     // 2. Faint, soft mortar lines (low opacity dark lines)
-    ctx.strokeStyle = 'rgba(20, 10, 8, 0.18)';
+    ctx.strokeStyle = 'rgba(12, 5, 4, 0.28)';
     ctx.lineWidth = 1.2;
 
     // Horizontal mortar lines

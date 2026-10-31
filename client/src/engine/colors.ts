@@ -34,5 +34,5 @@ export const SCENE_COLORS = {
   tentBaseColor: 0xccae72,       // 3. Цвет основания стойки/прилавка
 
   // --- BUILDINGS & WALLS (СТЕНЫ И ЗДАНИЯ) ---
-  wallBrickColor: 0x8b3a2b,      // Кирпичный цвет стен зданий (Terracotta / Red Brick)
+  wallBrickColor: 0x541e17,      // Тёмный кирпичный цвет стен зданий (Dark Terracotta / Red Brick)
 };
