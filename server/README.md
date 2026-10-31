@@ -1,6 +1,6 @@
 # DEV-A: Backend + GameLogic, этапы 0–8
 
-Go 1.26, net/http, gorilla/websocket, SQLite (mattn/go-sqlite3), bcrypt, JWT HS256.
+Go 1.26, net/http, gorilla/websocket, PostgreSQL 18.6 (pgx/v5/stdlib через database/sql), bcrypt, JWT HS256.
 Сервер реализует авторизацию, мир, словарь, общий торг NPC и покупки. Кошельки и инвентари личные.
 Three.js, визуальный QTE, TTS и FastAPI/Ollama интегрируются отдельно разработчиками C/B.
 
@@ -11,10 +11,10 @@ Three.js, визуальный QTE, TTS и FastAPI/Ollama интегрируют
 ```bash
 cd /home/klumaks/hack_2026/Rest-In-Hackaton/server
 export PATH="/usr/local/go/bin:$PATH"
-cp .env.example .env
-# Отредактировать .env: JWT_SECRET минимум 32 случайных символа;
-# ALLOWED_ORIGINS дополнить точным адресом клиента, например http://192.168.1.10:5173.
-# Сгенерировать секрет можно командой: openssl rand -hex 32
+python3 scripts/setup_env.py
+# В .env дополнить ALLOWED_ORIGINS точным адресом клиента, например http://192.168.1.10:5173.
+docker compose pull db
+docker compose up -d --wait db
 set -a
 source .env
 set +a
@@ -24,30 +24,46 @@ go run ./cmd/server
 
 .env автоматически не загружается: используйте source или переменные процесса.
 Сохраняйте один JWT_SECRET между перезапусками, иначе ранее выданные токены станут недействительными.
-Для go-sqlite3 нужны CGO_ENABLED=1 и gcc. Go уже найден в /usr/local/go/bin/go.
+Используйте Docker Compose V2 (`docker compose version`), не устаревший docker-compose V1.
+Драйвер БД не требует CGO; для go test -race нужен C-компилятор. Go найден в /usr/local/go/bin/go.
 
 ```bash
-go test -count=1 -timeout 60s ./...
+go test -count=1 -timeout 90s ./...
 go test -race -count=1 -timeout 120s ./...
 go vet ./...
-go build -o bin/server ./cmd/server
+CGO_ENABLED=0 go build -o bin/server ./cmd/server
+python3 scripts/process_smoke.py --restart-db
 ./bin/server
 ```
 
-Скачайте зависимости и соберите бинарник до отключения интернета. В runtime нет внешних CDN/API.
+Скачайте образ postgres:18.6, зависимости Go и соберите бинарник до отключения интернета.
+Тестам необходимы TEST_DATABASE_URL и запущенная БД; Python smoke-проверке нужен psql.
+Каждый DB/REST/WS-тест создаёт временную схему в hackaton_test и удаляет её после проверки.
+Флаг --restart-db перезапускает контейнер этого Compose-проекта; используйте его вне активной игры. В runtime нет внешних CDN/API.
 По умолчанию сервер слушает :3000; браузеры других устройств используют IP хост-ноутбука.
 При WSL NAT доступ из LAN также зависит от Windows Firewall и проброса порта; физическая LAN-проверка проводится с DEV-D.
 Остановка Ctrl+C / SIGTERM закрывает WS и сохраняет изменённые позиции.
 
-Переменные: SERVER_ADDR, DB_PATH, WORLD_DIR, CATALOG_PATH, AI_URL, JWT_SECRET, ALLOWED_ORIGINS.
+Переменные: SERVER_ADDR, обязательный DATABASE_URL, WORLD_DIR, CATALOG_PATH, AI_URL, JWT_SECRET, ALLOWED_ORIGINS.
+TEST_DATABASE_URL используется только тестами и должен указывать на hackaton_test.
+POSTGRES_PASSWORD и APP_DB_PASSWORD нужны Compose при первоначальной инициализации.
+Секреты находятся в игнорируемом .env; setup_env.py генерирует недостающие, сохраняя уже заданные.
 Пути по умолчанию относительны директории server/. AI_URL по умолчанию http://127.0.0.1:8000.
 Пустой/короткий JWT_SECRET, неверные Origin, каталог, отсутствующие чанки или ошибка миграции останавливают запуск.
 
-## SQLite
+## PostgreSQL
 
-Файл data/game.db создаётся автоматически до открытия порта; каталог данных не коммитится.
-Миграции internal/db/migrations/*.sql встроены в бинарник, применяются транзакционно и учитываются в schema_migrations.
-Настройки: одно соединение, foreign_keys=ON, journal_mode=WAL, synchronous=FULL, busy_timeout=5000.
+Compose-проект rest-in-hackaton использует postgres:18.6 и именованный том rest-in-hackaton_pgdata.
+Порт только 127.0.0.1:5433; системный PostgreSQL на 5432 не изменяется. Go запускается в WSL на хосте.
+При первом старте создаются базы hackaton/hackaton_test и роль hackaton без SUPERUSER/CREATEDB/CREATEROLE.
+Миграции internal/db/migrations/*.sql встроены в бинарник, применяются одной транзакцией под
+advisory lock до открытия HTTP-порта и учитываются в schema_migrations. Ошибка подключения или миграции останавливает запуск.
+Пул: до 10 соединений, 2 простаивающих; connect_timeout 5 с, statement_timeout 10 с,
+lock_timeout 5 с; миграции имеют отдельный лимит 30 с. ID — identity, координаты — DOUBLE PRECISION,
+время — TIMESTAMPTZ, истории и сохранённые ответы — JSONB.
+
+Остановка `docker compose down` сохраняет том; `down -v` удаляет данные.
+Пароли из .env применяются init-скриптом только для нового тома: изменение .env не меняет пароль существующей роли.
 
 - players: уникальный case-sensitive login, bcrypt-хэш, профиль business/culture, координаты, поворот и баланс 500.
 - known_words: уникальная пара player_id + word_id и время изучения. Регистрация и стартовые слова — одна транзакция.
@@ -58,14 +74,28 @@ go build -o bin/server ./cmd/server
 - Версия хода, личная история и ответ NPC фиксируются одной транзакцией; покупка атомарно меняет кошелёк, инвентарь, квитанцию и версию сцены.
 - Все дочерние player_id имеют FK с ON DELETE CASCADE. На значения установлены CHECK и NOT NULL.
 
-Миграция 002 сохраняет данные этапов 0–4. Новые общие сцены создаются из каталога, без объединения старых личных отношений.
+Миграция PostgreSQL 001 → 002 сохраняет данные предыдущей версии схемы PostgreSQL.
+При переходе локальная SQLite-база не обнаружена: PostgreSQL инициализируется пустым.
+Импорт SQLite и автоматическое переключение на неё не реализуются; старые файлы БД не удаляются. Новые общие сцены создаются из каталога, без объединения старых личных отношений.
 Незавершённые сделки хранятся только в памяти соединения; подтверждённые покупки и сцены переживают рестарт.
 
 Начальный спавн (110,110), рядом с Лао Ваном. Текущие позиции хранятся в памяти и записываются раз в 2 секунды,
 при отключении и штатной остановке. При аварии возможно потерять последние 2 секунды движения.
 Слова и ответы NPC подтверждаются только после записи в БД. AI ожидается вне транзакции и сетевого игрового цикла.
-Для резервной копии сначала штатно остановите сервер; не копируйте только game.db у работающего WAL-соединения.
-Не открывайте рабочую БД одновременно Windows-инструментом через сетевой UNC-путь.
+Покупка сначала блокирует строку NPC, затем кошелёк игрока (FOR UPDATE), повторно проверяет квитанцию,
+версию сцены, баланс и владение предметом. Изменения фиксируются одной транзакцией.
+При повторе подтверждённого запроса возвращается прежняя квитанция, включая повтор после рестарта.
+
+Резервная копия из server/ (pg_dump делает согласованный снимок работающей БД):
+
+```bash
+mkdir -p backups
+docker compose exec -T db pg_dump -U hackaton -d hackaton -Fc > backups/hackaton.dump
+docker compose exec -T db pg_restore --list < backups/hackaton.dump
+```
+
+Храните копии отдельно от рабочего тома и Git. Восстановление выполняйте в отдельную пустую базу через pg_restore;
+перед заменой рабочей БД остановите сервер и сохраните текущую копию.
 
 ## REST
 
@@ -216,7 +246,7 @@ npc_kind: merchant, chef или guard. Состояние/цена общие, �
 
 ## Что проверяют тесты
 
-Транзакционный откат регистрации, FK/CHECK/cascade, уникальность слов, миграции и настройки SQLite;
+Транзакционный откат регистрации, FK/CHECK/cascade, уникальность слов, миграции и настройки PostgreSQL;
 персистентность после закрытия/повторного открытия; JWT/Origin/пароли;
 AOI у границ и при неравных размерах; FSM и AI-контракт/отмена;
 два реальных WS-клиента, движение при медленном AI без удержания БД, персональные субтитры,

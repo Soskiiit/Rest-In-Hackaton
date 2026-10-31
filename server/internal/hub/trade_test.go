@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"hackaton/server/internal/db"
 	"hackaton/server/internal/game"
-	"path/filepath"
+	"hackaton/server/internal/testdb"
 	"testing"
 	"time"
 )
@@ -16,7 +16,7 @@ func tradeHarness(t *testing.T) (*Hub, *client, *client) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := db.Open(filepath.Join(t.TempDir(), "game.db"))
+	s, err := db.Open(testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}

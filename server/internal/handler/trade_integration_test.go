@@ -7,10 +7,10 @@ import (
 	"hackaton/server/internal/db"
 	"hackaton/server/internal/game"
 	"hackaton/server/internal/hub"
+	"hackaton/server/internal/testdb"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -69,7 +69,7 @@ func pair(t *testing.T, f *harness) (*websocket.Conn, *websocket.Conn, string, s
 	return a, b, ta, tb
 }
 func TestWSTradeRaceReplayReconnectAndRestart(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "game.db")
+	path := testdb.New(t)
 	f := start(t, path, "http://127.0.0.1:1")
 	a, b, ta, tb := pair(t, f)
 	send(t, a, "DIALOGUE", map[string]any{"npc_id": "lao_wang"})
@@ -183,7 +183,7 @@ func TestWSTradeRaceReplayReconnectAndRestart(t *testing.T) {
 	}
 }
 func TestNPCSpatialRecipientsAndInteractionRadius(t *testing.T) {
-	f := start(t, filepath.Join(t.TempDir(), "game.db"), "http://127.0.0.1:1")
+	f := start(t, testdb.New(t), "http://127.0.0.1:1")
 	a, b, _, _ := pair(t, f)
 	send(t, b, "MOVE", map[string]any{"x": 120, "z": 110, "rotation": 0})
 	until(t, a, "PLAYER_MOVE")
@@ -237,7 +237,7 @@ func TestDisconnectCancelsAIAndReleasesSharedNPC(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"parsed": reply})
 	}))
 	t.Cleanup(ai.Close)
-	f := start(t, filepath.Join(t.TempDir(), "game.db"), ai.URL)
+	f := start(t, testdb.New(t), ai.URL)
 	a, b, _, _ := pair(t, f)
 	send(t, a, "DIALOGUE", map[string]any{"npc_id": "lao_wang"})
 	until(t, a, "DIALOGUE_PENDING")
@@ -270,7 +270,7 @@ func TestDisconnectCancelsAIAndReleasesSharedNPC(t *testing.T) {
 func TestSlowAIUsesFallbackWithinClientTimeout(t *testing.T) {
 	ai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.Copy(io.Discard, r.Body); <-r.Context().Done() }))
 	t.Cleanup(ai.Close)
-	f := start(t, filepath.Join(t.TempDir(), "game.db"), ai.URL, func(a *game.AI) { a.Client.Timeout = 40 * time.Millisecond })
+	f := start(t, testdb.New(t), ai.URL, func(a *game.AI) { a.Client.Timeout = 40 * time.Millisecond })
 	c := dial(t, f, account(t, f, "alice", "business"))
 	until(t, c, "WELCOME")
 	until(t, c, "WORLD_STATS")

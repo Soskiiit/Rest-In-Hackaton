@@ -36,7 +36,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	store, err := db.Open(env("DB_PATH", "data/game.db"))
+	store, err := db.Open(os.Getenv("DATABASE_URL"))
 	if err != nil {
 		return err
 	}
