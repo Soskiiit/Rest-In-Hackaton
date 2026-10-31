@@ -1,0 +1,63 @@
+package hub
+
+import (
+	"context"
+	"encoding/json"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"hackaton/server/internal/db"
+	"hackaton/server/internal/game"
+)
+
+func TestObservedSpeechDoesNotInvalidateOwnDialogue(t *testing.T) {
+	catalog, err := game.LoadCatalog("../../world/catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(filepath.Join(t.TempDir(), "game.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	player, err := store.Register(context.Background(), "alice", "test-hash", "business", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &client{player: player, ctx: context.Background(), done: make(chan struct{}), send: make(chan []byte, 16),
+		expires: time.Now().Add(time.Hour), known: map[string]bool{}, activeNPC: "lao_wang",
+		turn: "own-valid-turn", choices: game.Choices(), speech: &Speech{NPCID: "another_npc"}}
+	h := &Hub{store: store, catalog: catalog, ai: game.NewAI("http://127.0.0.1:1", catalog),
+		ctx: context.Background(), done: make(chan struct{}), events: make(chan any, 1), clients: map[int64]*client{player.ID: c}}
+	scene, err := h.getScene("lao_wang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene.stored = &storedReply{Reply: game.Fallback(scene.data.Relation, nil, catalog)}
+	c.turn = turnID(scene)
+	oldTurn := c.turn
+	payload, _ := json.Marshal(map[string]any{"npc_id": "lao_wang", "choice_id": 1, "turn_id": c.turn})
+	h.dialogue(c, payload)
+	if !c.pending {
+		t.Fatal("hearing another NPC invalidated the player's active choice")
+	}
+	h.wg.Wait()
+	select {
+	case raw := <-h.events:
+		e, ok := raw.(aiDone)
+		if !ok {
+			t.Fatal("missing AI result")
+		}
+		h.finishDialogue(e)
+	case <-time.After(time.Second):
+		t.Fatal("dialogue did not complete")
+	}
+	if c.activeNPC != "lao_wang" || c.turn == oldTurn || c.pending {
+		t.Fatal("active conversation did not advance")
+	}
+	relation, err := store.Relation(context.Background(), player.ID, "lao_wang", 800, 120)
+	if err != nil || relation.Mianzi != 65 || len(relation.History) != 2 {
+		t.Fatalf("choice was not persisted: %+v %v", relation, err)
+	}
+}
