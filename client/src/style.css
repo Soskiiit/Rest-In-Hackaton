@@ -630,7 +630,7 @@ html, body {
   font-weight: 900;
   letter-spacing: 3px;
   color: var(--text-primary);
-  text-shadow: 0 0 18px rgba(0, 243, 255, 0.6);
+  text-shadow: 0 0 18px rgba(0, 255, 136, 0.8), 0 0 30px rgba(0, 255, 136, 0.4);
 }
 
 .game-subtitle {

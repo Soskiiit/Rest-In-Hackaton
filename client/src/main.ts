@@ -40,6 +40,8 @@ export const LAO_WANG_CONFIG = {
   id: 'lao_wang',
   name: 'Лао Ван (老王)',
   worldPosition: { x: 110.0, y: 0.0, z: 109.5 },
+  // Additional central position in North Plaza matching the pink square
+  centralPosition: { x: 100.0, y: 0.0, z: 124.0 },
   chunkCoord: { cx: 5, cz: 5 },
   interactionRadius: 3.5,
   interactionRadiusSq: 12.25, // 3.5 * 3.5
@@ -56,6 +58,7 @@ export const TEAPOT_CONFIG = {
   py: 'Cháhú',
   question: 'Как переводится это слово?',
   worldPosition: { x: 110.0, y: 0.9, z: 108.5 },
+  centralPosition: { x: 99.2, y: 0.9, z: 124.3 },
   chunkCoord: { cx: 5, cz: 5 },
   interactionRadius: 3.0,
   interactionRadiusSq: 9.0, // 3.0 * 3.0
@@ -383,7 +386,7 @@ class Application {
   private bindInputAndPointerLock(): void {
     // Clicking instructions blocker engages PointerLock
     this.blockerEl.addEventListener('click', () => {
-      if (!this.isModalActive) {
+      if (!this.isModalActive && !this.dialogueUI?.isOpen() && !this.quizPanel?.isOpen()) {
         this.playerController.requestPointerLock();
       }
     });
@@ -393,7 +396,7 @@ class Application {
     });
 
     this.playerController.onUnlock(() => {
-      if (!this.isModalActive) {
+      if (!this.isModalActive && !this.dialogueUI?.isOpen() && !this.quizPanel?.isOpen()) {
         this.blockerEl.classList.remove('hidden');
       }
     });
@@ -450,7 +453,9 @@ class Application {
       this.blockerEl.classList.add('hidden');
     } else {
       // Re-enable pointer lock prompt if needed
-      this.blockerEl.classList.remove('hidden');
+      if (!this.dialogueUI?.isOpen() && !this.quizPanel?.isOpen()) {
+        this.blockerEl.classList.remove('hidden');
+      }
     }
   }
 
@@ -561,14 +566,27 @@ class Application {
       return;
     }
 
+    // Check proximity to original 5_5 landmark OR new central pink square landmark
     const dxLao = pos.x - LAO_WANG_CONFIG.worldPosition.x;
     const dzLao = pos.z - LAO_WANG_CONFIG.worldPosition.z;
-    const distSqLao = dxLao * dxLao + dzLao * dzLao;
+    const distSqLao1 = dxLao * dxLao + dzLao * dzLao;
+
+    const dxLao2 = pos.x - LAO_WANG_CONFIG.centralPosition.x;
+    const dzLao2 = pos.z - LAO_WANG_CONFIG.centralPosition.z;
+    const distSqLao2 = dxLao2 * dxLao2 + dzLao2 * dzLao2;
+
+    const distSqLao = Math.min(distSqLao1, distSqLao2);
     const isNearLao = distSqLao <= LAO_WANG_CONFIG.interactionRadiusSq;
 
     const dxTea = pos.x - TEAPOT_CONFIG.worldPosition.x;
     const dzTea = pos.z - TEAPOT_CONFIG.worldPosition.z;
-    const distSqTea = dxTea * dxTea + dzTea * dzTea;
+    const distSqTea1 = dxTea * dxTea + dzTea * dzTea;
+
+    const dxTea2 = pos.x - TEAPOT_CONFIG.centralPosition.x;
+    const dzTea2 = pos.z - TEAPOT_CONFIG.centralPosition.z;
+    const distSqTea2 = dxTea2 * dxTea2 + dzTea2 * dzTea2;
+
+    const distSqTea = Math.min(distSqTea1, distSqTea2);
     const isNearTea = distSqTea <= TEAPOT_CONFIG.interactionRadiusSq;
 
     this.isNearLaoWang = isNearLao;
@@ -628,9 +646,15 @@ class Application {
     }
 
     const pos = this.playerController.getPosition();
-    const dx = pos.x - LAO_WANG_CONFIG.worldPosition.x;
-    const dz = pos.z - LAO_WANG_CONFIG.worldPosition.z;
-    const distSq = dx * dx + dz * dz;
+    const dx1 = pos.x - LAO_WANG_CONFIG.worldPosition.x;
+    const dz1 = pos.z - LAO_WANG_CONFIG.worldPosition.z;
+    const distSq1 = dx1 * dx1 + dz1 * dz1;
+
+    const dx2 = pos.x - LAO_WANG_CONFIG.centralPosition.x;
+    const dz2 = pos.z - LAO_WANG_CONFIG.centralPosition.z;
+    const distSq2 = dx2 * dx2 + dz2 * dz2;
+
+    const distSq = Math.min(distSq1, distSq2);
 
     if (distSq <= LAO_WANG_CONFIG.interactionRadiusSq) {
       if (event) {
@@ -651,9 +675,15 @@ class Application {
     }
 
     const pos = this.playerController.getPosition();
-    const dx = pos.x - TEAPOT_CONFIG.worldPosition.x;
-    const dz = pos.z - TEAPOT_CONFIG.worldPosition.z;
-    const distSq = dx * dx + dz * dz;
+    const dx1 = pos.x - TEAPOT_CONFIG.worldPosition.x;
+    const dz1 = pos.z - TEAPOT_CONFIG.worldPosition.z;
+    const distSq1 = dx1 * dx1 + dz1 * dz1;
+
+    const dx2 = pos.x - TEAPOT_CONFIG.centralPosition.x;
+    const dz2 = pos.z - TEAPOT_CONFIG.centralPosition.z;
+    const distSq2 = dx2 * dx2 + dz2 * dz2;
+
+    const distSq = Math.min(distSq1, distSq2);
 
     if (distSq <= TEAPOT_CONFIG.interactionRadiusSq) {
       if (event) {

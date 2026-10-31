@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ChunkStreamer } from './ChunkStreamer';
@@ -66,6 +65,7 @@ export class World {
   private hemiLight: THREE.HemisphereLight | null = null;
   private lanternsGroup: THREE.Group = new THREE.Group();
   private chunkStreamer: ChunkStreamer | null = null;
+  private vendorMixers: THREE.AnimationMixer[] = [];
 
   private clock: THREE.Clock = new THREE.Clock();
   private animationFrameId: number | null = null;
@@ -115,11 +115,11 @@ export class World {
     // 6. Atmospheric night market lanterns
     this.initMarketLanterns();
 
-    // 6.1 Custom Arch model at street entrance
-    this.initArchModel();
-
     // 6.2 Custom Market Layout (Streets, Plazas & Walls matching blueprint)
     this.initCustomMarketLayout();
+
+    // 6.3 Animated / Populated NPCs behind market stalls and in plazas
+    this.initMarketNpcs();
 
     // 7. Dynamic Chunk Streamer (10x10 grid, AoI <= 9 chunks)
     this.initChunkStreamer();
@@ -330,47 +330,8 @@ export class World {
   /**
    * Loads the custom arch OBJ model and places it majestically at the street entrance near spawn.
    */
-  private initArchModel(): void {
-    const loader = new OBJLoader();
-    loader.load(
-      '/models/arch.obj',
-      (obj) => {
-        // Compute bounding box to normalize scale
-        const box = new THREE.Box3().setFromObject(obj);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const maxDim = Math.max(size.x, size.y, size.z);
-        
-        // Target height ~5.5 meters over the street
-        const scale = maxDim > 0 ? 5.5 / maxDim : 4.0;
-        obj.scale.set(scale, scale, scale);
-
-        // Position over the entrance avenue right at the beginning of the street
-        obj.position.set(100, 0, 64);
-        obj.rotation.y = 0;
-
-        obj.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            if (!child.material || (Array.isArray(child.material) && child.material.length === 0)) {
-              child.material = new THREE.MeshStandardMaterial({
-                color: 0xcc2229, // Traditional Chinese Vermilion
-                roughness: 0.5,
-                metalness: 0.2,
-              });
-            }
-          }
-        });
-
-        this.scene.add(obj);
-        console.log('[World] Custom arch model successfully loaded and added to scene.');
-      },
-      undefined,
-      (err) => {
-        console.warn('[World] Could not load /models/arch.obj:', err);
-      }
-    );
+  public initArchModel(): void {
+    // Arch removed per user request
   }
 
   /**
@@ -380,6 +341,109 @@ export class World {
   private initCustomMarketLayout(): void {
     const layoutGroup = MarketLayout.buildLayoutGroup();
     this.scene.add(layoutGroup);
+  }
+
+  /**
+   * Populates 3D GLB animated vendor NPCs (Chef Chen and Lao Wang) behind market stalls.
+   */
+  private initMarketNpcs(): void {
+    const stalls = MarketLayout.getStalls();
+
+    // Stalls to populate (excluding the central landmark area)
+    // Deterministic pseudo-random selection (~60% stalls have an active vendor, ~40% are empty as if vendor stepped away)
+    const vendorPositions: Array<{ x: number; z: number; rotY: number }> = [];
+    for (const stall of stalls) {
+      const distToLaoWang = Math.hypot(stall.x - 100.0, stall.z - 124.0);
+      if (distToLaoWang < 3.5) continue;
+
+      // Consistent seed hash for this stall location
+      const hash = Math.sin(stall.x * 12.9898 + stall.z * 78.233) * 43758.5453;
+      const randVal = hash - Math.floor(hash);
+      // Skip vendor on ~40% of stalls so some counters remain empty
+      if (randVal < 0.38) {
+        continue;
+      }
+
+      const facingAngle = stall.rotY;
+      // Stalls face with canopy tilted forward towards customer side (+Z)
+      // Vendors now stand on the other side of the counter (+0.95m forward) facing back towards the stall
+      const offsetX = Math.sin(facingAngle) * 0.95;
+      const offsetZ = Math.cos(facingAngle) * 0.95;
+
+      vendorPositions.push({
+        x: stall.x + offsetX,
+        z: stall.z + offsetZ,
+        rotY: facingAngle + Math.PI,
+      });
+    }
+
+    // Load both GLTF vendor models (Chef Chen and Lao Wang)
+    const loader = new GLTFLoader();
+    const modelUrls = {
+      chef: '/assets/models/chef_chen.glb',
+      lao: '/assets/models/lao_wang.glb',
+    };
+
+    Promise.all([
+      loader.loadAsync(modelUrls.chef).catch(() => loader.loadAsync('/models/vendors/chef_chen.glb')),
+      loader.loadAsync(modelUrls.lao).catch(() => loader.loadAsync('/models/vendors/lao_wang.glb')),
+    ]).then(([chefGltf, laoGltf]) => {
+      console.log(`[World] Successfully loaded vendor GLB models! Populating ${vendorPositions.length} stalls...`);
+
+      // Spawn Lao Wang at his central antique pavilion stall (100.0, 0, 124.0)
+      // Pavilion center is (100.0, 124.0), counter is at z = 124.3 (extends to z=124.95), platform is from 122.2 to 125.8
+      // Position Lao Wang comfortably on the other side of the counter at z = 125.55 (facing towards counter/South: rotY = Math.PI)
+      const centralLaoWang = laoGltf.scene.clone(true);
+      centralLaoWang.position.set(100.0, 0.0, 125.55); // On the other side of the counter
+      centralLaoWang.rotation.set(0, Math.PI, 0);
+      centralLaoWang.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+      this.scene.add(centralLaoWang);
+
+      // Setup Idle animation on central Lao Wang
+      if (laoGltf.animations && laoGltf.animations.length > 0) {
+        const mixer = new THREE.AnimationMixer(centralLaoWang);
+        const idleClip = laoGltf.animations.find((a) => a.name === 'Idle') ?? laoGltf.animations[0];
+        mixer.clipAction(idleClip).play();
+        this.vendorMixers.push(mixer);
+      }
+
+      // Populate every stall with Chef Chen and Lao Wang models alternately
+      for (let i = 0; i < vendorPositions.length; i++) {
+        const vp = vendorPositions[i];
+        const isChef = i % 2 === 0;
+        const sourceGltf = isChef ? chefGltf : laoGltf;
+
+        const clone = sourceGltf.scene.clone(true);
+        clone.position.set(vp.x, 0.0, vp.z);
+        // Models face +Z by default; rotate by vp.rotY to face into corridor
+        clone.rotation.set(0, vp.rotY, 0);
+
+        clone.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+        this.scene.add(clone);
+
+        // Play Idle animation with slight random time offset
+        if (sourceGltf.animations && sourceGltf.animations.length > 0) {
+          const mixer = new THREE.AnimationMixer(clone);
+          const idleClip = sourceGltf.animations.find((a) => a.name === 'Idle') ?? sourceGltf.animations[0];
+          const action = mixer.clipAction(idleClip);
+          action.time = Math.random() * 4.0; // Desynchronize animations naturally
+          action.play();
+          this.vendorMixers.push(mixer);
+        }
+      }
+    }).catch((err) => {
+      console.warn('[World] Failed to load vendor GLTF models:', err);
+    });
   }
 
   /**
@@ -442,6 +506,11 @@ export class World {
     // Execute update hooks (PlayerController, OtherPlayerManager, ChunkStreamer)
     for (const listener of this.updateListeners) {
       listener(delta);
+    }
+
+    // Update animated vendor models (Chef Chen & Lao Wang)
+    for (const mixer of this.vendorMixers) {
+      mixer.update(delta);
     }
 
     // Render frame

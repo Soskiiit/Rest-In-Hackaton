@@ -9,11 +9,11 @@
 
 export const SCENE_COLORS = {
   // --- FLOOR & GROUND (ПОЛ) ---
-  floorColor: 0x574331,          // Базовый цвет пола мира
-  stoneTileLightColor: 0x72767a, // Светло-серый цвет светлых плиток (Stone_Light)
+  floorColor: 0x71767a,          // Базовый цвет пола мира
+  stoneTileLightColor: 0x7a8085, // Светло-серый цвет светлых плиток (Stone_Light)
   stoneTileDarkColor: 0x71767a,  // Светло-серый цвет темных плиток (Stone_Dark)
-  floorGridLine1: 0xffffff,      // Цвет основных линий сетки пола
-  floorGridLine2: 0xffffff,      // Цвет дополнительных линий сетки пола
+  floorGridLine1: 0x71767a,      // Цвет основных линий сетки пола
+  floorGridLine2: 0x71767a,      // Цвет дополнительных линий сетки пола
 
   // --- SKY & FOG (НЕБО И ТУМАН) ---
   fogColor: 0x99b6c9,            // Цвет тумана и фона неба
@@ -31,8 +31,8 @@ export const SCENE_COLORS = {
   // --- MARKET STALLS & TENTS (ПАЛАТКИ) ---
   tentRoofColor: 0xdb0000,       // 1. Цвет тканевого тента/крыши
   tentPoleColor: 0xc7c7c7,       // 2. Цвет палок/столбов, на которых держится тент
-  tentBaseColor: 0xccae72,       // 3. Цвет основания стойки/прилавка
+  tentBaseColor: 0x5a3825,       // 3. Тёмно-коричневый цвет дерева основания стойки/прилавка
 
   // --- BUILDINGS & WALLS (СТЕНЫ И ЗДАНИЯ) ---
-  wallBrickColor: 0x8b3a2b,      // Кирпичный цвет стен зданий (Terracotta / Red Brick)
+  wallBrickColor: 0x541e17,      // Тёмный кирпичный цвет стен зданий (Dark Terracotta / Red Brick)
 };

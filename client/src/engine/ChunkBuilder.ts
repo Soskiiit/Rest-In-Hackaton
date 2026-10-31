@@ -283,7 +283,7 @@ export class ChunkBuilder {
     // 2. Build Stalls, Props, Lanterns, or Landmark
     if (isLandmark) {
       // Chunk 5_5 Landmark: Lao Wang's Antique Pavilion & NPC Avatar Marker
-      const landmarkGroup = this.buildLaoWangLandmark(opts);
+      const landmarkGroup = this.buildLaoWangLandmark(opts, true);
       chunkGroup.add(landmarkGroup);
     } else {
       // Procedural Night Market Generation
@@ -510,6 +510,146 @@ export class ChunkBuilder {
     return group;
   }
 
+  // Cached shared wood plank texture for counters
+  private static woodTexture: THREE.CanvasTexture | null = null;
+  // Cached shared brushed metal texture for support poles
+  private static metalTexture: THREE.CanvasTexture | null = null;
+
+  /**
+   * Generates a realistic brushed metal texture for support poles.
+   */
+  public static getMetalTexture(): THREE.Texture | null {
+    if (this.metalTexture) {
+      return this.metalTexture;
+    }
+
+    if (typeof document === 'undefined') {
+      return null;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d')!;
+
+    // 1. Base metal grey background
+    ctx.fillStyle = '#9e9e9e';
+    ctx.fillRect(0, 0, 256, 256);
+
+    // 2. Vertical brushed metal streaks and micro-scratches
+    for (let x = 0; x < 256; x += 1) {
+      const hash = Math.abs(Math.sin(x * 127.1) * 10000);
+      const rand = hash - Math.floor(hash);
+
+      // Alternating light/dark subtle streaks
+      if (rand > 0.5) {
+        ctx.strokeStyle = `rgba(255, 255, 255, ${(rand - 0.5) * 0.22})`;
+      } else {
+        ctx.strokeStyle = `rgba(30, 30, 30, ${rand * 0.25})`;
+      }
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, 256);
+      ctx.stroke();
+    }
+
+    // 3. Subtle horizontal wear & patina bands
+    for (let y = 0; y < 256; y += 16) {
+      const bandHash = Math.abs(Math.sin(y * 43.7) * 1000);
+      const intensity = (bandHash - Math.floor(bandHash)) * 0.08;
+      ctx.fillStyle = `rgba(0, 0, 0, ${intensity})`;
+      ctx.fillRect(0, y, 256, 6);
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(1, 4);
+
+    this.metalTexture = texture;
+    return texture;
+  }
+
+  /**
+   * Generates a subtle, semi-transparent wood grain and plank texture for stalls.
+   */
+  public static getWoodTexture(): THREE.Texture | null {
+    if (this.woodTexture) {
+      return this.woodTexture;
+    }
+
+    if (typeof document === 'undefined') {
+      return null;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    // 1. Base wood tone (warm rich dark wood matching tentBaseColor #5a3825)
+    ctx.fillStyle = '#5a3825';
+    ctx.fillRect(0, 0, 512, 512);
+
+    const planks = 8;
+    const plankHeight = 512 / planks; // 64px per horizontal plank
+
+    // 2. Soft horizontal wood grain lines and plank variations
+    for (let p = 0; p < planks; p++) {
+      const y = p * plankHeight;
+
+      // Slight plank shade variation (semi-transparent)
+      const shade = (Math.sin(p * 45.3) * 0.5 + 0.5);
+      if (shade > 0.5) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.03 + (shade - 0.5) * 0.05})`;
+      } else {
+        ctx.fillStyle = `rgba(0, 0, 0, ${0.05 + shade * 0.08})`;
+      }
+      ctx.fillRect(0, y, 512, plankHeight);
+
+      // Fine organic wood grain streaks
+      for (let g = 0; g < 6; g++) {
+        const streakY = y + (g + 0.5) * (plankHeight / 6) + (Math.sin(g * 12.4) * 2);
+        ctx.strokeStyle = (g % 2 === 0) ? 'rgba(25, 12, 5, 0.18)' : 'rgba(255, 235, 210, 0.05)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(0, streakY);
+        // Subtle wave along the grain
+        ctx.bezierCurveTo(
+          128, streakY + Math.sin(p + g) * 3,
+          384, streakY - Math.sin(p - g) * 3,
+          512, streakY
+        );
+        ctx.stroke();
+      }
+
+      // Plank separator groove (dark thin seam)
+      ctx.strokeStyle = 'rgba(20, 10, 5, 0.45)';
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(512, y);
+      ctx.stroke();
+
+      // Top edge highlight for bevel
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = 1.0;
+      ctx.beginPath();
+      ctx.moveTo(0, y + 2);
+      ctx.lineTo(512, y + 2);
+      ctx.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(2, 2);
+
+    this.woodTexture = texture;
+    return texture;
+  }
+
   /**
    * Builds an individual market stall (counter box, corner poles, cloth canopy, props, lantern).
    */
@@ -524,13 +664,19 @@ export class ChunkBuilder {
       stall.rotation.y = config.rotationY;
     }
 
-    // 1. Counter Base (Wooden cabinet)
+    const woodTex = this.getWoodTexture();
+
+    // 1. Counter Base (Wooden cabinet with soft wood plank texture)
     const baseGeo = new THREE.BoxGeometry(3.0, 0.85, 1.2);
-    const baseMat = new THREE.MeshStandardMaterial({
-      color: SCENE_COLORS.tentBaseColor,
+    const baseMatConfig: THREE.MeshStandardMaterialParameters = {
+      color: woodTex ? 0xffffff : SCENE_COLORS.tentBaseColor,
       roughness: 0.75,
-      metalness: 0.1,
-    });
+      metalness: 0.08,
+    };
+    if (woodTex) {
+      baseMatConfig.map = woodTex;
+    }
+    const baseMat = new THREE.MeshStandardMaterial(baseMatConfig);
     const baseMesh = new THREE.Mesh(baseGeo, baseMat);
     baseMesh.position.y = 0.85 / 2;
     baseMesh.castShadow = opts.enableShadows ?? true;
@@ -538,13 +684,17 @@ export class ChunkBuilder {
     baseMesh.userData = { isWall: true, isStall: true };
     stall.add(baseMesh);
 
-    // 2. Counter Top (Slightly larger tabletop)
+    // 2. Counter Top (Slightly larger tabletop with matching wood texture)
     const topGeo = new THREE.BoxGeometry(3.2, 0.08, 1.4);
-    const topMat = new THREE.MeshStandardMaterial({
-      color: SCENE_COLORS.tentBaseColor,
+    const topMatConfig: THREE.MeshStandardMaterialParameters = {
+      color: woodTex ? 0xffffff : SCENE_COLORS.tentBaseColor,
       roughness: 0.6,
-      metalness: 0.15,
-    });
+      metalness: 0.12,
+    };
+    if (woodTex) {
+      topMatConfig.map = woodTex;
+    }
+    const topMat = new THREE.MeshStandardMaterial(topMatConfig);
     const topMesh = new THREE.Mesh(topGeo, topMat);
     topMesh.position.y = 0.85 + 0.04;
     topMesh.castShadow = opts.enableShadows ?? true;
@@ -552,9 +702,18 @@ export class ChunkBuilder {
     topMesh.userData = { isWall: true, isStall: true };
     stall.add(topMesh);
 
-    // 3. Four Wooden Support Posts
-    const postGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.3, 8);
-    const postMat = new THREE.MeshStandardMaterial({ color: SCENE_COLORS.tentPoleColor, roughness: 0.8 });
+    // 3. Four Metal Support Posts
+    const metalTex = this.getMetalTexture();
+    const postGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.3, 12);
+    const postMatConfig: THREE.MeshStandardMaterialParameters = {
+      color: metalTex ? 0xffffff : SCENE_COLORS.tentPoleColor,
+      roughness: 0.35,
+      metalness: 0.85,
+    };
+    if (metalTex) {
+      postMatConfig.map = metalTex;
+    }
+    const postMat = new THREE.MeshStandardMaterial(postMatConfig);
     const postOffsets = [
       { x: -1.45, z: -0.55 },
       { x: 1.45, z: -0.55 },
@@ -886,7 +1045,7 @@ export class ChunkBuilder {
    * Landmark: Chunk 5_5 Lao Wang Pavilion & Avatar Marker.
    * Prominent central landmark in the night market.
    */
-  public static buildLaoWangLandmark(opts: ChunkBuilderOptions = DEFAULT_CHUNK_OPTIONS): THREE.Group {
+  public static buildLaoWangLandmark(opts: ChunkBuilderOptions = DEFAULT_CHUNK_OPTIONS, includeAvatar: boolean = false): THREE.Group {
     const landmark = new THREE.Group();
     landmark.name = 'lao_wang_landmark';
     // Positioned in center of chunk (x=10, z=10), facing South towards player spawn (100, 100)
@@ -1009,10 +1168,12 @@ export class ChunkBuilder {
     jadePlaque.position.set(0.8, 0.25 + 0.9 + 0.03, 0.3);
     landmark.add(jadePlaque);
 
-    // 8. Lao Wang 3D Avatar Marker (Standing behind counter at z = -0.65)
-    const npcAvatar = this.buildLaoWangAvatar();
-    npcAvatar.position.set(0, 0.25, -0.65);
-    landmark.add(npcAvatar);
+    // 8. Lao Wang 3D Avatar Marker (only if requested or in tests)
+    if (includeAvatar) {
+      const npcAvatar = this.buildLaoWangAvatar();
+      npcAvatar.position.set(0, 0.25, -0.65);
+      landmark.add(npcAvatar);
+    }
 
     // 9. Two Grand Imperial Lanterns with warm illumination
     const lanternLeft = this.buildLantern(
