@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ChunkStreamer } from './ChunkStreamer';
@@ -115,11 +114,11 @@ export class World {
     // 6. Atmospheric night market lanterns
     this.initMarketLanterns();
 
-    // 6.1 Custom Arch model at street entrance
-    this.initArchModel();
-
     // 6.2 Custom Market Layout (Streets, Plazas & Walls matching blueprint)
     this.initCustomMarketLayout();
+
+    // 6.3 Animated / Populated NPCs behind market stalls and in plazas
+    this.initMarketNpcs();
 
     // 7. Dynamic Chunk Streamer (10x10 grid, AoI <= 9 chunks)
     this.initChunkStreamer();
@@ -330,47 +329,8 @@ export class World {
   /**
    * Loads the custom arch OBJ model and places it majestically at the street entrance near spawn.
    */
-  private initArchModel(): void {
-    const loader = new OBJLoader();
-    loader.load(
-      '/models/arch.obj',
-      (obj) => {
-        // Compute bounding box to normalize scale
-        const box = new THREE.Box3().setFromObject(obj);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const maxDim = Math.max(size.x, size.y, size.z);
-        
-        // Target height ~5.5 meters over the street
-        const scale = maxDim > 0 ? 5.5 / maxDim : 4.0;
-        obj.scale.set(scale, scale, scale);
-
-        // Position over the entrance avenue right at the beginning of the street
-        obj.position.set(100, 0, 64);
-        obj.rotation.y = 0;
-
-        obj.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            if (!child.material || (Array.isArray(child.material) && child.material.length === 0)) {
-              child.material = new THREE.MeshStandardMaterial({
-                color: 0xcc2229, // Traditional Chinese Vermilion
-                roughness: 0.5,
-                metalness: 0.2,
-              });
-            }
-          }
-        });
-
-        this.scene.add(obj);
-        console.log('[World] Custom arch model successfully loaded and added to scene.');
-      },
-      undefined,
-      (err) => {
-        console.warn('[World] Could not load /models/arch.obj:', err);
-      }
-    );
+  public initArchModel(): void {
+    // Arch removed per user request
   }
 
   /**
@@ -380,6 +340,117 @@ export class World {
   private initCustomMarketLayout(): void {
     const layoutGroup = MarketLayout.buildLayoutGroup();
     this.scene.add(layoutGroup);
+  }
+
+  /**
+   * Populates stylized human vendor NPCs behind every market stall across all avenues and plazas.
+   */
+  private initMarketNpcs(): void {
+    const stalls = MarketLayout.getStalls();
+
+    // Build stylized human vendor avatar geometry (tunic robe, pants, skin, mandarin cap, arms)
+    const geometries: THREE.BufferGeometry[] = [];
+    const materials: THREE.Material[] = [];
+
+    const robeMat = new THREE.MeshStandardMaterial({
+      color: 0x3d5a80, // Traditional Indigo Blue silk robe
+      roughness: 0.6,
+      metalness: 0.1,
+    });
+    const pantsMat = new THREE.MeshStandardMaterial({
+      color: 0x1d2d44, // Dark navy trousers
+      roughness: 0.8,
+    });
+    const skinMat = new THREE.MeshStandardMaterial({
+      color: 0xe0a96d, // Warm skin tone
+      roughness: 0.55,
+    });
+    const capMat = new THREE.MeshStandardMaterial({
+      color: 0x111111, // Mandarin cap
+      roughness: 0.8,
+    });
+
+    // 1. Torso & Upper Robe
+    const torsoGeo = new THREE.CylinderGeometry(0.25, 0.29, 0.60, 12);
+    torsoGeo.translate(0, 1.15, 0);
+    geometries.push(torsoGeo);
+    materials.push(robeMat);
+
+    // 2. Legs / Lower Body
+    const legsGeo = new THREE.CylinderGeometry(0.28, 0.32, 0.85, 12);
+    legsGeo.translate(0, 0.425, 0);
+    geometries.push(legsGeo);
+    materials.push(pantsMat);
+
+    // 3. Head
+    const headGeo = new THREE.SphereGeometry(0.18, 14, 14);
+    headGeo.translate(0, 1.58, 0);
+    geometries.push(headGeo);
+    materials.push(skinMat);
+
+    // 4. Traditional Cap
+    const capGeo = new THREE.SphereGeometry(0.19, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+    capGeo.translate(0, 1.63, 0);
+    geometries.push(capGeo);
+    materials.push(capMat);
+
+    // 5. Left Arm
+    const armLGeo = new THREE.CylinderGeometry(0.065, 0.065, 0.50, 8);
+    armLGeo.rotateZ(0.22);
+    armLGeo.translate(-0.32, 1.15, 0.08);
+    geometries.push(armLGeo);
+    materials.push(robeMat);
+
+    // 6. Right Arm
+    const armRGeo = new THREE.CylinderGeometry(0.065, 0.065, 0.50, 8);
+    armRGeo.rotateZ(-0.22);
+    armRGeo.translate(0.32, 1.15, 0.08);
+    geometries.push(armRGeo);
+    materials.push(robeMat);
+
+    const mergedGeo = BufferGeometryUtils.mergeGeometries(geometries, true);
+    if (!mergedGeo) return;
+
+    // Filter stalls: spawn human vendor behind every single stall (except central Lao Wang pavilion at 100, 124)
+    const vendorPositions: Array<{ x: number; z: number; rotY: number }> = [];
+    for (const stall of stalls) {
+      // Check distance to central Lao Wang pavilion
+      const distToLaoWang = Math.hypot(stall.x - 100.0, stall.z - 124.0);
+      if (distToLaoWang < 3.5) continue;
+
+      // Position vendor behind the counter facing forwards towards the customer corridor
+      const facingAngle = stall.rotY;
+      const offsetX = -Math.sin(facingAngle) * 0.95;
+      const offsetZ = -Math.cos(facingAngle) * 0.95;
+
+      vendorPositions.push({
+        x: stall.x + offsetX,
+        z: stall.z + offsetZ,
+        rotY: facingAngle,
+      });
+    }
+
+    const totalNpcs = vendorPositions.length;
+    const instancedMesh = new THREE.InstancedMesh(
+      mergedGeo,
+      materials,
+      totalNpcs
+    );
+    instancedMesh.receiveShadow = true;
+    instancedMesh.castShadow = true;
+
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < totalNpcs; i++) {
+      const vp = vendorPositions[i];
+      dummy.position.set(vp.x, 0.0, vp.z);
+      dummy.rotation.set(0, vp.rotY, 0);
+      dummy.updateMatrix();
+      instancedMesh.setMatrixAt(i, dummy.matrix);
+    }
+
+    instancedMesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(instancedMesh);
+    console.log(`[World] Successfully populated ${totalNpcs} human vendor NPCs behind every market stall!`);
   }
 
   /**

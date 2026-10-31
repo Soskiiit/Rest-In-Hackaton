@@ -9,8 +9,8 @@
 
 export const SCENE_COLORS = {
   // --- FLOOR & GROUND (ПОЛ) ---
-  floorColor: 0x574331,          // Базовый цвет пола мира
-  stoneTileLightColor: 0x72767a, // Светло-серый цвет светлых плиток (Stone_Light)
+  floorColor: 0x71767a,          // Базовый цвет пола мира
+  stoneTileLightColor: 0x7a8085, // Светло-серый цвет светлых плиток (Stone_Light)
   stoneTileDarkColor: 0x71767a,  // Светло-серый цвет темных плиток (Stone_Dark)
   floorGridLine1: 0xffffff,      // Цвет основных линий сетки пола
   floorGridLine2: 0xffffff,      // Цвет дополнительных линий сетки пола

@@ -127,35 +127,89 @@ export class MarketLayout {
   /**
    * Generates solid brick building walls positioned directly behind each row of stalls.
    */
+  /**
+   * Generates solid brick building walls forming the closed building blocks directly behind the stalls:
+   * 1. Top North Building Wall (yellow rectangle across top, buttressed directly to North Plaza stalls at Z=146.5)
+   * 2. West Building Outer Wall (yellow rectangle along left, buttressed directly to West Plaza stalls at X=47.5)
+   * 3. East Building Outer Wall (yellow rectangle along right, buttressed directly to East Plaza stalls at X=152.5)
+   * 4. South-West Building Outer Wall (yellow rectangle at bottom-left, buttressed to South Avenue at Z=60)
+   * 5. South-East Building Outer Wall (yellow rectangle at bottom-right, buttressed to South Avenue at Z=60)
+   * Plus all the inner building walls directly behind the corridor stalls, perfectly enclosing the corridors!
+   */
   public static getWalls(): LayoutWallItem[] {
     const wallH = 8.5;
     return [
-      // 1. South Entrance Avenue walls
-      { x: 92.5, z: 78.0, width: 5.0, depth: 36.0, height: wallH }, // behind west stalls
-      { x: 107.5, z: 78.0, width: 5.0, depth: 36.0, height: wallH }, // behind east stalls
+      // =======================================================================
+      // 1. SOUTH ENTRANCE AVENUE WALLS (Flanking the South street corridor)
+      // Left (West) wall at X=93.5, Z from 60 to 95 (length: 35m)
+      { x: 93.5, z: 77.5, width: 4.0, depth: 35.0, height: wallH },
+      // Right (East) wall at X=106.5, Z from 60 to 95 (length: 35m)
+      { x: 106.5, z: 77.5, width: 4.0, depth: 35.0, height: wallH },
 
-      // 2. West corridor walls
-      { x: 84.0, z: 107.5, width: 24.0, depth: 5.0, height: wallH }, // south corridor wall
-      { x: 83.0, z: 92.5, width: 22.0, depth: 5.0, height: wallH },  // north corridor wall
+      // =======================================================================
+      // 2. WEST CORRIDOR & WEST PLAZA (Closed Building Facades)
+      // South corridor wall: Z=106.0, X from 71 to 93.5
+      { x: 82.25, z: 106.0, width: 22.5, depth: 4.0, height: wallH },
+      // North corridor wall: Z=94.0, X from 71 to 81
+      { x: 76.0, z: 94.0, width: 10.0, depth: 4.0, height: wallH },
 
-      // West Plaza perimeter walls
-      { x: 46.5, z: 100.0, width: 5.0, depth: 24.0, height: wallH }, // west exterior wall
-      { x: 60.0, z: 86.5, width: 26.0, depth: 5.0, height: wallH },  // north exterior wall
-      { x: 60.0, z: 113.5, width: 26.0, depth: 5.0, height: wallH }, // south exterior wall
+      // West Plaza interior building walls:
+      // East opening perimeter segment: X=71, Z from 106 to 112.5
+      { x: 71.0, z: 109.25, width: 4.0, depth: 6.5, height: wallH },
+      // East opening perimeter segment: X=71, Z from 87.5 to 94
+      { x: 71.0, z: 90.75, width: 4.0, depth: 6.5, height: wallH },
+      // South Plaza wall: Z=112.5, X from 47.5 to 71
+      { x: 59.25, z: 112.5, width: 23.5, depth: 4.0, height: wallH },
+      // North Plaza wall: Z=87.5, X from 47.5 to 71
+      { x: 59.25, z: 87.5, width: 23.5, depth: 4.0, height: wallH },
 
-      // 3. East corridor walls
-      { x: 116.0, z: 107.5, width: 24.0, depth: 5.0, height: wallH }, // south corridor wall
-      { x: 117.0, z: 92.5, width: 22.0, depth: 5.0, height: wallH },  // north corridor wall
+      // =======================================================================
+      // 3. EAST CORRIDOR & EAST PLAZA (Closed Building Facades)
+      // South corridor wall: Z=106.0, X from 106.5 to 129
+      { x: 117.75, z: 106.0, width: 22.5, depth: 4.0, height: wallH },
+      // North corridor wall: Z=94.0, X from 119 to 129
+      { x: 124.0, z: 94.0, width: 10.0, depth: 4.0, height: wallH },
 
-      // East Plaza perimeter walls
-      { x: 153.5, z: 100.0, width: 5.0, depth: 24.0, height: wallH }, // east exterior wall
-      { x: 140.0, z: 86.5, width: 26.0, depth: 5.0, height: wallH },  // north exterior wall
-      { x: 140.0, z: 113.5, width: 26.0, depth: 5.0, height: wallH }, // south exterior wall
+      // East Plaza interior building walls:
+      // West opening perimeter segment: X=129, Z from 106 to 112.5
+      { x: 129.0, z: 109.25, width: 4.0, depth: 6.5, height: wallH },
+      // West opening perimeter segment: X=129, Z from 87.5 to 94
+      { x: 129.0, z: 90.75, width: 4.0, depth: 6.5, height: wallH },
+      // South Plaza wall: Z=112.5, X from 129 to 152.5
+      { x: 140.75, z: 112.5, width: 23.5, depth: 4.0, height: wallH },
+      // North Plaza wall: Z=87.5, X from 129 to 152.5
+      { x: 140.75, z: 87.5, width: 23.5, depth: 4.0, height: wallH },
 
-      // 4. Large North Plaza perimeter walls
-      { x: 78.5, z: 125.0, width: 5.0, depth: 38.0, height: wallH },  // west plaza wall
-      { x: 121.5, z: 125.0, width: 5.0, depth: 38.0, height: wallH }, // east plaza wall
-      { x: 100.0, z: 147.5, width: 44.0, depth: 5.0, height: wallH }, // north back wall
+      // =======================================================================
+      // 4. LARGE NORTH PLAZA WALLS (Enclosing the North Square Bazaar)
+      // West Plaza interior wall: X=79.5, Z from 94 to 146.5 (length: 52.5m)
+      { x: 79.5, z: 120.25, width: 4.0, depth: 52.5, height: wallH },
+      // East Plaza interior wall: X=120.5, Z from 94 to 146.5 (length: 52.5m)
+      { x: 120.5, z: 120.25, width: 4.0, depth: 52.5, height: wallH },
+
+      // =======================================================================
+      // 5. EXTERNAL BUILDING WALLS (The 4 Yellow Rectangles on the Blueprint)
+      // Flush and buttressed to form the outer perimeter of the buildings!
+
+      // TOP NORTH OUTER WALL (Yellow rectangle at top, flush with north stalls at Z=146.5)
+      // Spans from West Outer Wall (X=47.5) to East Outer Wall (X=152.5), width = 109m
+      { x: 100.0, z: 146.5, width: 109.0, depth: 4.0, height: wallH },
+
+      // LEFT WEST OUTER WALL (Yellow rectangle on left, flush with West Plaza stalls at X=47.5)
+      // Spans from North Wall (Z=146.5) to South Wall (Z=60.0), depth = 90.5m
+      { x: 47.5, z: 103.25, width: 4.0, depth: 90.5, height: wallH },
+
+      // RIGHT EAST OUTER WALL (Yellow rectangle on right, flush with East Plaza stalls at X=152.5)
+      // Spans from North Wall (Z=146.5) to South Wall (Z=60.0), depth = 90.5m
+      { x: 152.5, z: 103.25, width: 4.0, depth: 90.5, height: wallH },
+
+      // BOTTOM SOUTH-WEST WALL (Yellow rectangle at bottom-left, flush with entrance at Z=60.0)
+      // Spans from West Outer Wall (X=47.5) to South Avenue (X=93.5), width = 50m
+      { x: 70.5, z: 60.0, width: 50.0, depth: 4.0, height: wallH },
+
+      // BOTTOM SOUTH-EAST WALL (Yellow rectangle at bottom-right, flush with entrance at Z=60.0)
+      // Spans from South Avenue (X=106.5) to East Outer Wall (X=152.5), width = 50m
+      { x: 129.5, z: 60.0, width: 50.0, depth: 4.0, height: wallH },
     ];
   }
 
@@ -211,6 +265,13 @@ export class MarketLayout {
       );
       root.add(stallMesh);
     }
+
+    // 3. Central Lao Wang Pavilion Landmark Stall at pink square in North Plaza (x=100, z=124)
+    const centralPavilion = ChunkBuilder.buildLaoWangLandmark();
+    // Central pavilion faces South towards player entering the north plaza
+    centralPavilion.position.set(100.0, 0, 124.0);
+    centralPavilion.rotation.y = 0;
+    root.add(centralPavilion);
 
     return root;
   }
