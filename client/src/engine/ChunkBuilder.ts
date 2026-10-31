@@ -431,8 +431,9 @@ export class ChunkBuilder {
   }
 
   /**
-   * Generates ONE single straight row of market stalls along the left side (x = 6.2),
-   * strictly facing the pedestrian street (towards the right wall).
+   * Generates procedural market stalls based on chunk coordinate (cx, cz):
+   * - Plazas (every 2nd chunk, (cx + cz) % 2 === 0): Open square bazaar with stalls arranged in a square looking INWARDS.
+   * - Streets (alternating chunks): Straight or turning street corridor leading into the squares.
    */
   private static generateProceduralStalls(rng: SeededRandom, cx: number, cz: number, opts: ChunkBuilderOptions): THREE.Group {
     const group = new THREE.Group();
@@ -440,16 +441,54 @@ export class ChunkBuilder {
 
     let lightsCreated = 0;
 
-    // Single continuous row of 4 stalls along the left sidewalk (x = 6.2)
-    // facing into the street (rotY = -Math.PI / 2)
-    const slots: Array<{ x: number; z: number; rotY: number }> = [
-      { x: 6.2, z: 2.5, rotY: -Math.PI / 2 },
-      { x: 6.2, z: 7.5, rotY: -Math.PI / 2 },
-      { x: 6.2, z: 12.5, rotY: -Math.PI / 2 },
-      { x: 6.2, z: 17.5, rotY: -Math.PI / 2 },
-    ];
+    // Pattern: Plazas (open squares with inward stalls) vs Cross/Turn Streets
+    const isSquarePlaza = (cx + cz) % 2 === 0;
 
-    for (let i = 0; i < slots.length; i++) {
+    let slots: Array<{ x: number; z: number; rotY: number }> = [];
+
+    if (isSquarePlaza) {
+      // SQUARE PLAZA: Stalls along 4 perimeter sides facing the open central square!
+      slots = [
+        // North side (facing south: rotY = Math.PI)
+        { x: 6.5, z: 3.5, rotY: Math.PI },
+        { x: 13.5, z: 3.5, rotY: Math.PI },
+        // South side (facing north: rotY = 0)
+        { x: 6.5, z: 16.5, rotY: 0 },
+        { x: 13.5, z: 16.5, rotY: 0 },
+        // West side (facing east: rotY = -Math.PI / 2)
+        { x: 3.5, z: 10.0, rotY: -Math.PI / 2 },
+        // East side (facing west: rotY = Math.PI / 2)
+        { x: 16.5, z: 10.0, rotY: Math.PI / 2 },
+      ];
+    } else {
+      // STREET CORRIDOR / TURN: Two side rows with intersections
+      const isEastWestTurn = (cx % 2 === 0);
+      if (isEastWestTurn) {
+        // Horizontal street (walk East-West)
+        slots = [
+          { x: 3.5, z: 6.0, rotY: 0 },
+          { x: 10.0, z: 6.0, rotY: 0 },
+          { x: 16.5, z: 6.0, rotY: 0 },
+          { x: 3.5, z: 14.0, rotY: Math.PI },
+          { x: 10.0, z: 14.0, rotY: Math.PI },
+          { x: 16.5, z: 14.0, rotY: Math.PI },
+        ];
+      } else {
+        // Vertical street (walk North-South)
+        slots = [
+          { x: 6.0, z: 3.5, rotY: -Math.PI / 2 },
+          { x: 6.0, z: 10.0, rotY: -Math.PI / 2 },
+          { x: 6.0, z: 16.5, rotY: -Math.PI / 2 },
+          { x: 14.0, z: 3.5, rotY: Math.PI / 2 },
+          { x: 14.0, z: 10.0, rotY: Math.PI / 2 },
+          { x: 14.0, z: 16.5, rotY: Math.PI / 2 },
+        ];
+      }
+    }
+
+    const stallCount = rng.int(Math.min(4, slots.length), slots.length);
+
+    for (let i = 0; i < stallCount && i < slots.length; i++) {
       const slot = slots[i];
       const canopyColor = rng.choice(CANOPY_PALETTE);
       const stallTypes: StallType[] = ['tea', 'jade', 'food', 'general', 'noodles', 'scrolls', 'herbs', 'weapons'];
