@@ -18,7 +18,10 @@ export type PacketType =
   | 'CALCULATOR'
   | 'ERROR'
   | 'PING'
-  | 'PONG';
+  | 'PONG'
+  | 'WELCOME'
+  | 'PLAYER_JOIN'
+  | 'CONNECTION_CLOSED';
 
 export interface Packet<T = any> {
   type: PacketType | string;
@@ -120,8 +123,41 @@ export interface ChunkUnloadPayload {
   chunk_ids: string[];
 }
 
+/** Первое сообщение сервера после подключения: актуальное состояние игрока. */
+export interface WelcomePayload {
+  player: {
+    id: number;
+    login: string;
+    profile: string;
+    x: number;
+    z: number;
+    rotation: number;
+    balance: number;
+  };
+  known_words: string[];
+  inventory: Array<{ item_id: string; price_paid: number }>;
+  world?: { total_chunks: number; total_bytes: number; chunk_size: number; max_percent: number };
+}
+
+/** Другой игрок появился в зоне видимости. */
+export interface PlayerJoinPayload {
+  id: number;
+  login: string;
+  profile: string;
+  x: number;
+  z: number;
+  rotation: number;
+  balance?: number;
+}
+
+/** Локальное событие WSClient: соединение закрыто (code 1008 — аккаунт уже в игре). */
+export interface ConnectionClosedPayload {
+  code: number;
+  reason: string;
+}
+
 export interface ErrorPayload {
-  message: string;
+  message?: string;
   code?: string;
 }
 
@@ -145,6 +181,9 @@ export interface PacketMap {
   ERROR: ErrorPayload;
   PING: Record<string, never>;
   PONG: Record<string, never>;
+  WELCOME: WelcomePayload;
+  PLAYER_JOIN: PlayerJoinPayload;
+  CONNECTION_CLOSED: ConnectionClosedPayload;
 }
 
 // -------------------------------------------------------------

@@ -143,9 +143,15 @@
       <div id="instructions" class="instructions-card">
         <div class="cyber-badge">3D SHOWCASE // DEMO MODE</div>
         <h1 class="game-title">REST IN HACKATON</h1>
-        <h2 class="game-subtitle">Трудности Перевода: Шэньчжэньский Экспресс</h2>
+        <h2 class="game-subtitle">Китайский на сдачу</h2>
         
         <div class="prompt-pulse">▶ КЛИКНИТЕ ДЛЯ ПОДКЛЮЧЕНИЯ И ВХОДА В МИР ◀</div>
+
+        <!-- Текущий игрок и выход из аккаунта (видно после входа) -->
+        <div id="auth-status" class="auth-status hidden">
+          <span>Вы вошли как <b id="auth-status-login"></b></span>
+          <button id="logout-btn" class="cyber-btn" type="button">Выйти</button>
+        </div>
 
         <div class="controls-guide">
           <div class="guide-item">

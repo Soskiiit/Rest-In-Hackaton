@@ -13,15 +13,27 @@ import { HUD } from './ui/HUD';
 import { DialogueUI } from './ui/DialogueUI';
 import { QuizPanel } from './ui/QuizPanel';
 import { TTS } from './audio/TTS';
+import { AuthScreen } from './ui/AuthScreen';
 import {
+  AuthClient,
+  AuthSession,
+  SessionStore,
+  browserStorage,
+  resolveApiBase,
+  wsUrlFor,
+} from './net/auth';
+import {
+  ConnectionClosedPayload,
   NpcSpeechPayload,
   NpcStatePayload,
+  PlayerJoinPayload,
+  PlayerLeavePayload,
+  WelcomePayload,
   WordLearnedPayload,
 } from './net/types';
 
 // Network & Transmission Configuration
 const MOVE_SEND_INTERVAL_SEC = 0.05; // 20 Hz (50 ms)
-const DEFAULT_WS_PORT = '3000';
 
 // Lao Wang Landmark & Proximity Configuration
 export const LAO_WANG_CONFIG = {
@@ -66,6 +78,12 @@ class Application {
   private hud!: HUD;
   private dialogueUI!: DialogueUI;
   private quizPanel!: QuizPanel;
+
+  // Авторизация
+  private authClient: AuthClient | null = null;
+  private authScreen: AuthScreen | null = null;
+  private sessionStore = new SessionStore(browserStorage());
+  private session: AuthSession | null = null;
 
   // DOM Elements
   private blockerEl!: HTMLElement;
@@ -190,32 +208,166 @@ class Application {
     client.on('WORD_LEARNED', (payload: WordLearnedPayload) => {
       this.handleWordLearned(payload);
     });
+
+    // 6. Авторизованная сессия: актуальное состояние игрока от сервера
+    client.on('WELCOME', (payload: WelcomePayload) => {
+      this.applyPlayerState(payload.player, payload.known_words, true);
+    });
+
+    // 7. Другие игроки появляются и уходят из зоны видимости
+    client.on('PLAYER_JOIN', (payload: PlayerJoinPayload) => {
+      this.otherPlayerManager.updatePlayer({
+        player_id: payload.id,
+        x: payload.x,
+        z: payload.z,
+        rotation: payload.rotation,
+      });
+    });
+    client.on('PLAYER_LEAVE', (payload: PlayerLeavePayload) => {
+      this.otherPlayerManager.removePlayer(payload.player_id);
+    });
+
+    // 8. Сервер закрыл соединение: 1008 = этот аккаунт уже в игре
+    client.on('CONNECTION_CLOSED', (payload: ConnectionClosedPayload) => {
+      if (payload.code === 1008) {
+        void this.handleSessionRejected(
+          'Этот аккаунт уже в игре на другом устройстве. Войдите под другим логином.'
+        );
+      }
+    });
+
+    client.on('ERROR', (payload) => {
+      console.warn('[Main] Server error:', payload?.code ?? payload);
+    });
   }
 
   private async initNetworking(): Promise<void> {
     const urlParams = new URLSearchParams(window.location.search);
     const forceMock = urlParams.get('mock') === 'true' || urlParams.get('demo') === 'true';
 
-    const wsHost = window.location.hostname || 'localhost';
-    const wsPort = urlParams.get('ws_port') || DEFAULT_WS_PORT;
-    const wsUrl = `ws://${wsHost}:${wsPort}/ws`;
-
     if (forceMock) {
       this.activateMockServer();
       return;
     }
 
-    this.wsClient = new WSClient(wsUrl);
-    this.wireNetworkHandlers(this.wsClient);
+    this.authClient = new AuthClient(resolveApiBase(window.location));
+    this.authScreen = new AuthScreen(this.authClient);
+    this.bindLogout();
+    await this.startOnlineSession(this.sessionStore.load());
+  }
+
+  /**
+   * Вход в мир: сохранённая сессия или экран входа -> WebSocket с токеном.
+   * Повторяется, пока игрок не войдёт или не выберет демо-режим.
+   */
+  private async startOnlineSession(saved: AuthSession | null, notice?: string): Promise<void> {
+    const authClient = this.authClient!;
+    const authScreen = this.authScreen!;
+    let session = saved;
+    let message = notice;
+
+    for (;;) {
+      if (!session) {
+        const result = await authScreen.show(message);
+        if (result.kind === 'offline') {
+          authScreen.hide();
+          this.activateMockServer();
+          return;
+        }
+        session = result.session;
+        this.sessionStore.save(session);
+      }
+
+      authScreen.showConnecting();
+      if (await this.connectWithSession(session)) {
+        authScreen.hide();
+        this.hud.showToast(`Добро пожаловать, ${session.player.login}!`);
+        return;
+      }
+
+      // Не подключились: токен устарел или сервер недоступен.
+      this.sessionStore.clear();
+      this.session = null;
+      session = null;
+      message = (await authClient.health())
+        ? 'Сессия устарела. Войдите снова.'
+        : 'Не удалось подключиться к серверу. Проверьте, что он запущен, или играйте в демо-режиме.';
+    }
+  }
+
+  private async connectWithSession(session: AuthSession): Promise<boolean> {
+    const authClient = this.authClient!;
+    this.wsClient?.disconnect();
+
+    const client = new WSClient({ url: wsUrlFor(authClient.apiBase, session.token), mock: false });
+    this.wsClient = client;
+    this.wireNetworkHandlers(client);
+    this.applyPlayerState(session.player, session.knownWords, false);
 
     try {
-      await this.wsClient.connect();
+      await client.connect();
+      this.session = session;
       this.hud.setWsStatus('connected');
-      console.log(`[Main] Connected to WebSocket backend at ${wsUrl}`);
+      this.setAuthStatus(session.player.login);
+      console.log(`[Main] Connected as '${session.player.login}' to ${authClient.apiBase}`);
+      return true;
     } catch (err) {
-      console.warn('[Main] Connection to Go backend failed. Activating standalone MockServer fallback.', err);
-      this.activateMockServer();
+      console.warn('[Main] Authenticated WebSocket connection failed:', err);
+      client.disconnect();
+      this.hud.setWsStatus('disconnected');
+      return false;
     }
+  }
+
+  /** Применяет позицию, баланс и словарь игрока (из ответа входа или WELCOME). */
+  private applyPlayerState(
+    player: { login: string; x: number; z: number; balance: number },
+    knownWords: string[],
+    moveToServerPosition: boolean
+  ): void {
+    this.playerBalance = player.balance;
+    this.hud.updateBalance(player.balance);
+    this.knownWords = new Set(knownWords);
+    if (moveToServerPosition) {
+      const current = this.playerController.getPosition();
+      this.playerController.setPosition(player.x, current.y, player.z);
+    }
+    if (this.dialogueUI && this.dialogueUI.isOpen()) {
+      this.dialogueUI.refreshSubtitles(this.knownWords);
+    }
+  }
+
+  /** Сервер отклонил сессию во время игры: возвращаемся к экрану входа. */
+  private async handleSessionRejected(message: string): Promise<void> {
+    this.sessionStore.clear();
+    this.session = null;
+    this.setAuthStatus(null);
+    this.otherPlayerManager.clear();
+    this.playerController.exitPointerLock();
+    this.hud.setWsStatus('disconnected');
+    if (this.authClient && this.authScreen && !this.authScreen.isVisible()) {
+      await this.startOnlineSession(null, message);
+    }
+  }
+
+  /** Строка «Вы вошли как …» и кнопка «Выйти» на стартовом экране. */
+  private setAuthStatus(login: string | null): void {
+    const box = document.getElementById('auth-status');
+    const name = document.getElementById('auth-status-login');
+    if (!box || !name) return;
+    name.textContent = login ?? '';
+    box.classList.toggle('hidden', !login);
+  }
+
+  private bindLogout(): void {
+    const button = document.getElementById('logout-btn');
+    button?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation(); // не запрашивать pointer lock у подложки
+      this.sessionStore.clear();
+      this.wsClient?.disconnect();
+      window.location.reload();
+    });
   }
 
   private activateMockServer(): void {
@@ -703,6 +855,11 @@ class Application {
   }
 
   // Public Inspection Accessors
+  /** Текущая авторизованная сессия (null в демо-режиме или до входа). */
+  public getSession(): AuthSession | null {
+    return this.session;
+  }
+
   public getDialogueUI(): DialogueUI {
     return this.dialogueUI;
   }

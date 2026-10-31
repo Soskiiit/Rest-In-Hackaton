@@ -128,8 +128,15 @@ export class WSClient {
           }
         };
 
-        this.ws.onclose = () => {
+        this.ws.onclose = (event?: { code?: number; reason?: string }) => {
+          const code = event?.code ?? 1006;
+          const reason = event?.reason ?? '';
+          // 1008 = сервер отклонил сессию (аккаунт уже в игре). Переподключение бессмысленно.
+          if (code === 1008) {
+            this.isExplicitlyClosed = true;
+          }
           this.setConnectionState('closed');
+          this.dispatch('CONNECTION_CLOSED', { code, reason });
           if (!settled) {
             settled = true;
             clearTimeout(timeout);
