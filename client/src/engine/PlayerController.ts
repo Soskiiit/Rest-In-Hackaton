@@ -30,7 +30,7 @@ export const DEFAULT_PLAYER_CONFIG: PlayerControllerConfig = {
   maxBoundZ: 199.0,
   playerRadius: 0.5,
   damping: 12.0,
-  spawnPosition: { x: 100, y: 0, z: 100 },
+  spawnPosition: { x: 100, y: 0, z: 66 },
 };
 
 /**

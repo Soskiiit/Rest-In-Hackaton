@@ -285,22 +285,16 @@ export class ChunkBuilder {
       // Chunk 5_5 Landmark: Lao Wang's Antique Pavilion & NPC Avatar Marker
       const landmarkGroup = this.buildLaoWangLandmark(opts);
       chunkGroup.add(landmarkGroup);
-
-      // Central Plaza (Spawn area): Keep it an open bazaar square without black walls blocking the player!
     } else {
       // Procedural Night Market Generation
       const seed = (cx * 73856093) ^ (cz * 19349663) ^ 0x9e3779b9;
       const rng = new SeededRandom(seed);
 
-      const proceduralStalls = this.generateProceduralStalls(rng, cx, cz, opts);
-      chunkGroup.add(proceduralStalls);
+      const stalls = this.generateProceduralStalls(rng, cx, cz, opts);
+      chunkGroup.add(stalls);
 
       const proceduralProps = this.generateProceduralProps(rng, opts);
       chunkGroup.add(proceduralProps);
-
-      // Realistic Chinese architecture: 2-sided buildings, pagoda roofs, signboards & overhead wire lanterns!
-      const streetAtmosphere = this.generateStreetFacadesAndOverhead(opts);
-      chunkGroup.add(streetAtmosphere);
     }
 
     return chunkGroup;
@@ -313,7 +307,7 @@ export class ChunkBuilder {
    * 3. Glowing Chinese shop signboards (vertical neon/wood boards with red/gold glow)
    * 4. Overhead wires with hanging red lanterns stretched across the entire street (exactly like reference photo!)
    */
-  private static generateStreetFacadesAndOverhead(opts: ChunkBuilderOptions): THREE.Group {
+  public static generateStreetFacadesAndOverhead(opts: ChunkBuilderOptions): THREE.Group {
     const group = new THREE.Group();
     group.name = 'facades_and_overhead';
 
