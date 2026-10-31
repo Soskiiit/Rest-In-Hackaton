@@ -31,7 +31,7 @@ export const SCENE_COLORS = {
   // --- MARKET STALLS & TENTS (ПАЛАТКИ) ---
   tentRoofColor: 0xdb0000,       // 1. Цвет тканевого тента/крыши
   tentPoleColor: 0xc7c7c7,       // 2. Цвет палок/столбов, на которых держится тент
-  tentBaseColor: 0xccae72,       // 3. Цвет основания стойки/прилавка
+  tentBaseColor: 0x5a3825,       // 3. Тёмно-коричневый цвет дерева основания стойки/прилавка
 
   // --- BUILDINGS & WALLS (СТЕНЫ И ЗДАНИЯ) ---
   wallBrickColor: 0x541e17,      // Тёмный кирпичный цвет стен зданий (Dark Terracotta / Red Brick)

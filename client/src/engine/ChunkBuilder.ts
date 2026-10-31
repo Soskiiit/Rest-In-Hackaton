@@ -512,6 +512,64 @@ export class ChunkBuilder {
 
   // Cached shared wood plank texture for counters
   private static woodTexture: THREE.CanvasTexture | null = null;
+  // Cached shared brushed metal texture for support poles
+  private static metalTexture: THREE.CanvasTexture | null = null;
+
+  /**
+   * Generates a realistic brushed metal texture for support poles.
+   */
+  public static getMetalTexture(): THREE.Texture | null {
+    if (this.metalTexture) {
+      return this.metalTexture;
+    }
+
+    if (typeof document === 'undefined') {
+      return null;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d')!;
+
+    // 1. Base metal grey background
+    ctx.fillStyle = '#9e9e9e';
+    ctx.fillRect(0, 0, 256, 256);
+
+    // 2. Vertical brushed metal streaks and micro-scratches
+    for (let x = 0; x < 256; x += 1) {
+      const hash = Math.abs(Math.sin(x * 127.1) * 10000);
+      const rand = hash - Math.floor(hash);
+
+      // Alternating light/dark subtle streaks
+      if (rand > 0.5) {
+        ctx.strokeStyle = `rgba(255, 255, 255, ${(rand - 0.5) * 0.22})`;
+      } else {
+        ctx.strokeStyle = `rgba(30, 30, 30, ${rand * 0.25})`;
+      }
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, 256);
+      ctx.stroke();
+    }
+
+    // 3. Subtle horizontal wear & patina bands
+    for (let y = 0; y < 256; y += 16) {
+      const bandHash = Math.abs(Math.sin(y * 43.7) * 1000);
+      const intensity = (bandHash - Math.floor(bandHash)) * 0.08;
+      ctx.fillStyle = `rgba(0, 0, 0, ${intensity})`;
+      ctx.fillRect(0, y, 256, 6);
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(1, 4);
+
+    this.metalTexture = texture;
+    return texture;
+  }
 
   /**
    * Generates a subtle, semi-transparent wood grain and plank texture for stalls.
@@ -530,8 +588,8 @@ export class ChunkBuilder {
     canvas.height = 512;
     const ctx = canvas.getContext('2d')!;
 
-    // 1. Base wood tone (matching tentBaseColor #ccae72)
-    ctx.fillStyle = '#ccae72';
+    // 1. Base wood tone (warm rich dark wood matching tentBaseColor #5a3825)
+    ctx.fillStyle = '#5a3825';
     ctx.fillRect(0, 0, 512, 512);
 
     const planks = 8;
@@ -544,16 +602,16 @@ export class ChunkBuilder {
       // Slight plank shade variation (semi-transparent)
       const shade = (Math.sin(p * 45.3) * 0.5 + 0.5);
       if (shade > 0.5) {
-        ctx.fillStyle = `rgba(255, 255, 255, ${0.02 + (shade - 0.5) * 0.04})`;
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.03 + (shade - 0.5) * 0.05})`;
       } else {
-        ctx.fillStyle = `rgba(0, 0, 0, ${0.03 + shade * 0.05})`;
+        ctx.fillStyle = `rgba(0, 0, 0, ${0.05 + shade * 0.08})`;
       }
       ctx.fillRect(0, y, 512, plankHeight);
 
       // Fine organic wood grain streaks
       for (let g = 0; g < 6; g++) {
         const streakY = y + (g + 0.5) * (plankHeight / 6) + (Math.sin(g * 12.4) * 2);
-        ctx.strokeStyle = (g % 2 === 0) ? 'rgba(70, 45, 20, 0.08)' : 'rgba(255, 255, 255, 0.05)';
+        ctx.strokeStyle = (g % 2 === 0) ? 'rgba(25, 12, 5, 0.18)' : 'rgba(255, 235, 210, 0.05)';
         ctx.lineWidth = 1.2;
         ctx.beginPath();
         ctx.moveTo(0, streakY);
@@ -567,7 +625,7 @@ export class ChunkBuilder {
       }
 
       // Plank separator groove (dark thin seam)
-      ctx.strokeStyle = 'rgba(40, 25, 10, 0.25)';
+      ctx.strokeStyle = 'rgba(20, 10, 5, 0.45)';
       ctx.lineWidth = 2.0;
       ctx.beginPath();
       ctx.moveTo(0, y);
@@ -575,7 +633,7 @@ export class ChunkBuilder {
       ctx.stroke();
 
       // Top edge highlight for bevel
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
       ctx.lineWidth = 1.0;
       ctx.beginPath();
       ctx.moveTo(0, y + 2);
@@ -644,9 +702,18 @@ export class ChunkBuilder {
     topMesh.userData = { isWall: true, isStall: true };
     stall.add(topMesh);
 
-    // 3. Four Wooden Support Posts
-    const postGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.3, 8);
-    const postMat = new THREE.MeshStandardMaterial({ color: SCENE_COLORS.tentPoleColor, roughness: 0.8 });
+    // 3. Four Metal Support Posts
+    const metalTex = this.getMetalTexture();
+    const postGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.3, 12);
+    const postMatConfig: THREE.MeshStandardMaterialParameters = {
+      color: metalTex ? 0xffffff : SCENE_COLORS.tentPoleColor,
+      roughness: 0.35,
+      metalness: 0.85,
+    };
+    if (metalTex) {
+      postMatConfig.map = metalTex;
+    }
+    const postMat = new THREE.MeshStandardMaterial(postMatConfig);
     const postOffsets = [
       { x: -1.45, z: -0.55 },
       { x: 1.45, z: -0.55 },
