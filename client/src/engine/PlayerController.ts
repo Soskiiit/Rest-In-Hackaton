@@ -160,10 +160,47 @@ export class PlayerController {
     window.addEventListener('keyup', this.onKeyUp);
   }
 
-  private onClick = (): void => {
-    if (!this.isInputLocked && !this.isPointerLocked) {
-      this.domElement.requestPointerLock();
+  private isMenuOrModalOpen(): boolean {
+    if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return false;
+    const authEl = document.getElementById('auth-overlay');
+    if (authEl && !authEl.classList?.contains('hidden')) return true;
+
+    const dialogueEl = document.getElementById('dialogue-overlay');
+    if (dialogueEl && !dialogueEl.classList?.contains('hidden')) return true;
+
+    const quizEl = document.getElementById('quiz-overlay');
+    if (quizEl && !quizEl.classList?.contains('hidden')) return true;
+
+    return false;
+  }
+
+  private onClick = (event?: MouseEvent | any): void => {
+    if (this.isInputLocked || this.isPointerLocked) return;
+
+    if (event?.target && typeof event.target.closest === 'function') {
+      const target = event.target as HTMLElement;
+      if (
+        target.closest('#auth-overlay') ||
+        target.closest('.auth-overlay') ||
+        target.closest('#dialogue-overlay') ||
+        target.closest('.dialogue-overlay') ||
+        target.closest('#quiz-overlay') ||
+        target.closest('.quiz-overlay') ||
+        target.closest('#logout-btn') ||
+        target.closest('button') ||
+        target.closest('input') ||
+        target.closest('textarea') ||
+        target.closest('select') ||
+        target.closest('a') ||
+        target.closest('label')
+      ) {
+        return;
+      }
     }
+
+    if (this.isMenuOrModalOpen()) return;
+
+    this.domElement.requestPointerLock();
   };
 
   private onPointerLockChange = (): void => {
@@ -276,7 +313,7 @@ export class PlayerController {
    * Requests browser pointer lock on the controller's DOM element.
    */
   public requestPointerLock(): void {
-    if (!this.isInputLocked) {
+    if (!this.isInputLocked && !this.isMenuOrModalOpen()) {
       this.domElement.requestPointerLock();
     }
   }

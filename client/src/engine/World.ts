@@ -66,6 +66,7 @@ export class World {
   private lanternsGroup: THREE.Group = new THREE.Group();
   private chunkStreamer: ChunkStreamer | null = null;
   private vendorMixers: THREE.AnimationMixer[] = [];
+  private cachedWallBoundingBoxes: THREE.Box3[] | null = null;
 
   private clock: THREE.Clock = new THREE.Clock();
   private animationFrameId: number | null = null;
@@ -99,7 +100,7 @@ export class World {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
 
@@ -268,11 +269,14 @@ export class World {
     this.dirLight.shadow.mapSize.height = 2048;
     this.dirLight.shadow.camera.near = 10;
     this.dirLight.shadow.camera.far = 250;
-    this.dirLight.shadow.camera.left = -110;
-    this.dirLight.shadow.camera.right = 110;
-    this.dirLight.shadow.camera.top = 110;
-    this.dirLight.shadow.camera.bottom = -110;
-    this.dirLight.shadow.bias = -0.0005;
+    // Tightened shadow frustum covering the entire active market layout (136x136m)
+    // Enhances texel density per meter by ~66% and culls offscreen geometry from shadow pass
+    this.dirLight.shadow.camera.left = -68;
+    this.dirLight.shadow.camera.right = 68;
+    this.dirLight.shadow.camera.top = 68;
+    this.dirLight.shadow.camera.bottom = -68;
+    this.dirLight.shadow.bias = -0.0002;
+    this.dirLight.shadow.normalBias = 0.04;
 
     this.scene.add(this.dirLight);
   }
@@ -508,14 +512,63 @@ export class World {
       listener(delta);
     }
 
-    // Update animated vendor models (Chef Chen & Lao Wang)
-    for (const mixer of this.vendorMixers) {
-      mixer.update(delta);
-    }
+    // Update animated vendor models selectively (only visible & within range)
+    this.updateVendorAnimations(delta);
 
     // Render frame
     this.renderer.render(this.scene, this.camera);
   };
+
+  /**
+   * Updates animated vendor models (Chef Chen & Lao Wang) selectively:
+   * Only processes skeletal animation if NPC is within distance threshold N (35m)
+   * AND approximately in front of camera view direction (dot > 0.15, ~162° view cone),
+   * or very close (< 4m) for peripheral vision.
+   */
+  public updateVendorAnimations(delta: number): void {
+    if (this.vendorMixers.length === 0) return;
+
+    const camPos = this.camera.position;
+    const camDir = new THREE.Vector3();
+    this.camera.getWorldDirection(camDir);
+    camDir.y = 0;
+    camDir.normalize();
+
+    const maxDistSq = 35.0 * 35.0; // 35m distance threshold
+
+    for (let i = 0; i < this.vendorMixers.length; i++) {
+      const mixer = this.vendorMixers[i];
+      const root = mixer.getRoot() as THREE.Object3D;
+      if (!root || !root.position) {
+        mixer.update(delta);
+        continue;
+      }
+
+      const dx = root.position.x - camPos.x;
+      const dz = root.position.z - camPos.z;
+      const distSq = dx * dx + dz * dz;
+
+      // 1. Distance check: if further than 35m, skip skeletal animation
+      if (distSq > maxDistSq) {
+        continue;
+      }
+
+      // 2. Proximity override: if very close (< 4m), always update (even in peripheral vision)
+      if (distSq < 16.0) {
+        mixer.update(delta);
+        continue;
+      }
+
+      // 3. Direction check: verify NPC is roughly in front of camera view cone
+      const dist = Math.sqrt(distSq);
+      const dot = camDir.x * (dx / dist) + camDir.z * (dz / dist);
+
+      // dot > 0.15 corresponds to ~81° off-axis (~162° view cone)
+      if (dot > 0.15) {
+        mixer.update(delta);
+      }
+    }
+  }
 
   /**
    * Registers a per-frame update listener. Returns an unsubscribe function.
@@ -592,8 +645,15 @@ export class World {
    */
   public update(delta: number, playerX?: number, playerZ?: number): void {
     if (this.chunkStreamer && playerX !== undefined && playerZ !== undefined) {
-      this.chunkStreamer.update(playerX, playerZ);
+      const changed = this.chunkStreamer.update(playerX, playerZ);
+      if (changed) {
+        this.cachedWallBoundingBoxes = null;
+      }
     }
+
+    // Update animated vendor models selectively (only visible & within range)
+    this.updateVendorAnimations(delta);
+
     for (const listener of this.updateListeners) {
       listener(delta);
     }
@@ -601,9 +661,13 @@ export class World {
 
   /**
    * Scans active scene for wall objects with userData.isWall and computes their world Box3 bounding boxes.
-   * Updates world matrix beforehand to guarantee 100% accurate global bounding boxes.
+   * Caches results so expensive scene traversal and vertex iteration only occurs when geometry changes.
    */
-  public getWallBoundingBoxes(): THREE.Box3[] {
+  public getWallBoundingBoxes(forceRefresh: boolean = false): THREE.Box3[] {
+    if (this.cachedWallBoundingBoxes && !forceRefresh) {
+      return this.cachedWallBoundingBoxes;
+    }
+
     const boxes: THREE.Box3[] = [];
     const spawnX = this.config.floorSize / 2;
     const spawnZ = this.config.floorSize / 2;
@@ -621,7 +685,16 @@ export class World {
         }
       }
     });
+
+    this.cachedWallBoundingBoxes = boxes;
     return boxes;
+  }
+
+  /**
+   * Explicitly invalidates the cached wall bounding boxes.
+   */
+  public invalidateWallBoundingBoxesCache(): void {
+    this.cachedWallBoundingBoxes = null;
   }
 
   /**

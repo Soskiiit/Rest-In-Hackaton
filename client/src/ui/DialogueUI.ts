@@ -135,6 +135,13 @@ export class DialogueUI implements IDialogueUI {
     this.lineOriginalEl = getEl('dialogue-line-original');
     this.lineTranslatedEl = getEl('dialogue-line-translated');
     this.choicesContainerEl = getEl('dialogue-choices');
+
+    const closeBtn = getEl('dialogue-close-btn');
+    if (closeBtn && typeof closeBtn.addEventListener === 'function') {
+      closeBtn.addEventListener('click', () => {
+        this.close();
+      });
+    }
   }
 
   /**

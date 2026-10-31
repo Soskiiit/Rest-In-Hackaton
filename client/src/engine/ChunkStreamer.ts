@@ -73,7 +73,7 @@ export const defaultChunkFactory: ChunkFactory = (
  * Public interface contract as specified in PROJECT.md.
  */
 export interface IChunkStreamer {
-  update(playerX: number, playerZ: number): void;
+  update(playerX: number, playerZ: number): boolean | void;
   getLoadedChunksCount(): number;
   getCachePercentage(): number;
   dispose(): void;
@@ -172,9 +172,9 @@ export class ChunkStreamer implements IChunkStreamer {
    * Computes set differences (toUnload vs toLoad) and executes unloads BEFORE loads
    * to guarantee that active chunks in memory never exceed 9 at any instant.
    */
-  public update(playerX: number, playerZ: number): void {
+  public update(playerX: number, playerZ: number): boolean {
     if (!Number.isFinite(playerX) || !Number.isFinite(playerZ)) {
-      return;
+      return false;
     }
 
     const { cx, cz } = ChunkStreamer.worldToChunkCoords(
@@ -187,7 +187,7 @@ export class ChunkStreamer implements IChunkStreamer {
 
     // Fast-path: player remained within the same center chunk
     if (this.lastChunkX === cx && this.lastChunkZ === cz) {
-      return;
+      return false;
     }
 
     this.lastChunkX = cx;
@@ -225,6 +225,8 @@ export class ChunkStreamer implements IChunkStreamer {
     for (const id of toLoad) {
       this.loadChunk(id);
     }
+
+    return toUnload.length > 0 || toLoad.length > 0;
   }
 
   /**

@@ -272,6 +272,28 @@ html, body {
   animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.dialogue-close-btn {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  background: transparent;
+  border: 1px solid rgba(0, 243, 255, 0.3);
+  border-radius: 6px;
+  color: var(--neon-cyan);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 2px 8px;
+  line-height: 1.2;
+  transition: all 0.2s ease;
+  z-index: 10;
+}
+
+.dialogue-close-btn:hover {
+  background: rgba(0, 243, 255, 0.15);
+  color: #fff;
+  border-color: var(--neon-cyan);
+}
+
 .dialogue-header {
   display: flex;
   justify-content: space-between;

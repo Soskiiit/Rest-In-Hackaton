@@ -49,6 +49,9 @@ export class AuthScreen {
     this.overlay.setAttribute('role', 'dialog');
     this.overlay.setAttribute('aria-modal', 'true');
     this.overlay.setAttribute('aria-labelledby', 'auth-title');
+    this.overlay.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
 
     const card = el('div', 'auth-card');
     const badge = el('div', 'cyber-badge', 'ВХОД В МИР');
