@@ -1,0 +1,366 @@
+{
+  "words": {
+    "word_expensive": {
+      "id": "word_expensive",
+      "zh": "太贵了",
+      "py": "Tài guì le",
+      "ru": "слишком дорого"
+    },
+    "word_jade": {
+      "id": "word_jade",
+      "zh": "玉",
+      "py": "yù",
+      "ru": "нефрит"
+    },
+    "word_money": {
+      "id": "word_money",
+      "zh": "钱",
+      "py": "qián",
+      "ru": "деньги"
+    },
+    "word_cheap": {
+      "id": "word_cheap",
+      "zh": "便宜",
+      "py": "piányi",
+      "ru": "дёшево"
+    },
+    "word_one": {
+      "id": "word_one",
+      "zh": "一",
+      "py": "yī",
+      "ru": "один"
+    },
+    "word_two": {
+      "id": "word_two",
+      "zh": "二",
+      "py": "èr",
+      "ru": "два"
+    },
+    "word_three": {
+      "id": "word_three",
+      "zh": "三",
+      "py": "sān",
+      "ru": "три"
+    },
+    "word_five": {
+      "id": "word_five",
+      "zh": "五",
+      "py": "wǔ",
+      "ru": "пять"
+    },
+    "word_eight": {
+      "id": "word_eight",
+      "zh": "八",
+      "py": "bā",
+      "ru": "восемь"
+    },
+    "word_hundred": {
+      "id": "word_hundred",
+      "zh": "百",
+      "py": "bǎi",
+      "ru": "сто"
+    },
+    "word_teapot": {
+      "id": "word_teapot",
+      "zh": "茶壶",
+      "py": "cháhú",
+      "ru": "чайник"
+    },
+    "word_cup": {
+      "id": "word_cup",
+      "zh": "茶杯",
+      "py": "chábēi",
+      "ru": "чашка"
+    },
+    "word_chopsticks": {
+      "id": "word_chopsticks",
+      "zh": "筷子",
+      "py": "kuàizi",
+      "ru": "палочки"
+    },
+    "word_bowl": {
+      "id": "word_bowl",
+      "zh": "碗",
+      "py": "wǎn",
+      "ru": "пиала"
+    },
+    "word_tea": {
+      "id": "word_tea",
+      "zh": "茶叶",
+      "py": "cháyè",
+      "ru": "чай"
+    },
+    "word_noodles": {
+      "id": "word_noodles",
+      "zh": "面条",
+      "py": "miàntiáo",
+      "ru": "лапша"
+    },
+    "word_boss": {
+      "id": "word_boss",
+      "zh": "老板",
+      "py": "lǎobǎn",
+      "ru": "босс"
+    },
+    "word_sorry": {
+      "id": "word_sorry",
+      "zh": "对不起",
+      "py": "duìbuqǐ",
+      "ru": "извините"
+    },
+    "word_hello": {
+      "id": "word_hello",
+      "zh": "你好",
+      "py": "nǐ hǎo",
+      "ru": "здравствуйте"
+    },
+    "word_authentic": {
+      "id": "word_authentic",
+      "zh": "正宗的",
+      "py": "zhèngzōng de",
+      "ru": "настоящий"
+    },
+    "word_this": {
+      "id": "word_this",
+      "zh": "这是",
+      "py": "Zhè shì",
+      "ru": "это"
+    },
+    "word_spicy": {
+      "py": "là",
+      "zh": "辣",
+      "ru": "острое",
+      "id": "word_spicy"
+    },
+    "word_peanut": {
+      "py": "huāshēng",
+      "zh": "花生",
+      "ru": "арахис",
+      "id": "word_peanut"
+    },
+    "word_ticket": {
+      "py": "piào",
+      "zh": "票",
+      "ru": "билет",
+      "id": "word_ticket"
+    },
+    "word_passport": {
+      "py": "hùzhào",
+      "zh": "护照",
+      "ru": "паспорт",
+      "id": "word_passport"
+    },
+    "word_station": {
+      "py": "chēzhàn",
+      "zh": "车站",
+      "ru": "станция",
+      "id": "word_station"
+    },
+    "word_water": {
+      "py": "shuǐ",
+      "zh": "水",
+      "ru": "вода",
+      "id": "word_water"
+    },
+    "word_safe": {
+      "py": "ānquán",
+      "zh": "安全",
+      "ru": "безопасность",
+      "id": "word_safe"
+    }
+  },
+  "profiles": {
+    "business": [
+      "word_expensive",
+      "word_money",
+      "word_cheap",
+      "word_one",
+      "word_two",
+      "word_three",
+      "word_five",
+      "word_eight",
+      "word_hundred"
+    ],
+    "culture": [
+      "word_jade",
+      "word_cup",
+      "word_tea",
+      "word_boss",
+      "word_sorry",
+      "word_hello",
+      "word_authentic"
+    ]
+  },
+  "npcs": {
+    "lao_wang": {
+      "id": "lao_wang",
+      "x": 110,
+      "z": 110,
+      "price": 800,
+      "price_floor": 120,
+      "kind": "merchant"
+    },
+    "chef_chen": {
+      "z": 110,
+      "x": 70,
+      "kind": "chef",
+      "price": 150,
+      "id": "chef_chen",
+      "price_floor": 40
+    },
+    "guard_zhang": {
+      "z": 50,
+      "x": 150,
+      "kind": "guard",
+      "price": 0,
+      "id": "guard_zhang",
+      "price_floor": 0
+    }
+  },
+  "items": {
+    "teapot": {
+      "id": "teapot",
+      "x": 112,
+      "z": 110,
+      "word_id": "word_teapot",
+      "answer_id": 1,
+      "options": [
+        {
+          "id": 1,
+          "zh": "茶壶",
+          "py": "cháhú",
+          "ru": "чайник"
+        },
+        {
+          "id": 2,
+          "zh": "茶杯",
+          "py": "chábēi",
+          "ru": "чашка"
+        },
+        {
+          "id": 3,
+          "zh": "筷子",
+          "py": "kuàizi",
+          "ru": "палочки"
+        },
+        {
+          "id": 4,
+          "zh": "碗",
+          "py": "wǎn",
+          "ru": "пиала"
+        }
+      ]
+    },
+    "jade_amulet": {
+      "z": 110,
+      "answer_id": 1,
+      "x": 113,
+      "id": "jade_amulet",
+      "options": [
+        {
+          "py": "yù",
+          "zh": "玉",
+          "ru": "нефрит",
+          "id": 1
+        },
+        {
+          "py": "cháyè",
+          "zh": "茶叶",
+          "ru": "чай",
+          "id": 2
+        },
+        {
+          "py": "chábēi",
+          "zh": "茶杯",
+          "ru": "чашка",
+          "id": 3
+        },
+        {
+          "py": "wǎn",
+          "zh": "碗",
+          "ru": "пиала",
+          "id": 4
+        }
+      ],
+      "word_id": "word_jade"
+    },
+    "noodles": {
+      "z": 110,
+      "answer_id": 1,
+      "x": 72,
+      "id": "noodles",
+      "options": [
+        {
+          "py": "miàntiáo",
+          "zh": "面条",
+          "ru": "лапша",
+          "id": 1
+        },
+        {
+          "py": "cháyè",
+          "zh": "茶叶",
+          "ru": "чай",
+          "id": 2
+        },
+        {
+          "py": "shuǐ",
+          "zh": "水",
+          "ru": "вода",
+          "id": 3
+        },
+        {
+          "py": "huāshēng",
+          "zh": "花生",
+          "ru": "арахис",
+          "id": 4
+        }
+      ],
+      "word_id": "word_noodles"
+    },
+    "ticket": {
+      "z": 50,
+      "answer_id": 1,
+      "x": 152,
+      "id": "ticket",
+      "options": [
+        {
+          "py": "piào",
+          "zh": "票",
+          "ru": "билет",
+          "id": 1
+        },
+        {
+          "py": "hùzhào",
+          "zh": "护照",
+          "ru": "паспорт",
+          "id": 2
+        },
+        {
+          "py": "chēzhàn",
+          "zh": "车站",
+          "ru": "станция",
+          "id": 3
+        },
+        {
+          "py": "ānquán",
+          "zh": "安全",
+          "ru": "безопасность",
+          "id": 4
+        }
+      ],
+      "word_id": "word_ticket"
+    }
+  },
+  "products": {
+    "noodles": {
+      "word_id": "word_noodles",
+      "npc_id": "chef_chen",
+      "id": "noodles"
+    },
+    "jade_amulet": {
+      "word_id": "word_jade",
+      "npc_id": "lao_wang",
+      "id": "jade_amulet"
+    }
+  }
+}

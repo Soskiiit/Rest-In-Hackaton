@@ -4,5 +4,9 @@ npm_packages/
 .venv/
 venv/
 .agents/
+# DEV-A local runtime and build outputs
+server/data/
+server/bin/
+server/.env
 __pycache__/
 *.pyc
