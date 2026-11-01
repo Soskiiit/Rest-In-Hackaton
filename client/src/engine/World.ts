@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { ChunkBuilder } from './ChunkBuilder';
 import { ChunkStreamer } from './ChunkStreamer';
 import { SCENE_COLORS } from './colors';
@@ -70,9 +71,30 @@ export class World {
   private vendorEntries: Array<{
     root: THREE.Object3D;
     mixer?: THREE.AnimationMixer;
+    clips?: THREE.AnimationClip[];
+    idleAction?: THREE.AnimationAction;
+    npcId?: string;
     x: number;
     z: number;
     isCentral?: boolean;
+  }> = [];
+  private chickenEntries: Array<{
+    root: THREE.Object3D;
+    mixer: THREE.AnimationMixer;
+    runAction: THREE.AnimationAction;
+    peckAction: THREE.AnimationAction;
+    panicAction: THREE.AnimationAction;
+    currentAction: THREE.AnimationAction;
+    state: 'run' | 'peck' | 'panic';
+    stateTimer: number;
+    panicTimer: number;
+    x: number;
+    z: number;
+    currentYaw: number;
+    targetYaw: number;
+    homeX: number;
+    homeZ: number;
+    roamRadius: number;
   }> = [];
   private cachedWallBoundingBoxes: THREE.Box3[] | null = null;
   private shadowFrameCounter: number = 0;
@@ -351,10 +373,11 @@ export class World {
    * Loads the stone pavement tile model and instantiates it seamlessly across the entire 200x200 floor.
    */
   private initStoneTileFloor(): void {
-    const loader = new GLTFLoader();
-    loader.load(
-      '/models/path_straight.glb',
-      (gltf) => {
+    try {
+      const loader = new GLTFLoader();
+      loader.load(
+        '/models/path_straight.glb',
+        (gltf) => {
         gltf.scene.updateMatrixWorld(true);
         const geometries: THREE.BufferGeometry[] = [];
         const materials: THREE.Material[] = [];
@@ -463,6 +486,9 @@ export class World {
         console.warn('[World] Could not load stone tile model /models/path_straight.glb:', err);
       }
     );
+    } catch (err) {
+      console.warn('[World] Could not initialize stone tile floor:', err);
+    }
   }
 
   /**
@@ -577,36 +603,54 @@ export class World {
       }
 
       const facingAngle = stall.rotY;
-      // Stalls face with canopy tilted forward towards customer side (+Z)
-      // Vendors now stand on the other side of the counter (+0.95m forward) facing back towards the stall
-      const offsetX = Math.sin(facingAngle) * 0.95;
-      const offsetZ = Math.cos(facingAngle) * 0.95;
+      // Stalls face outwards into the street/walkway
+      // Vendors stand right behind the counter (+0.15m forward past stall center towards the counter)
+      const offsetX = Math.sin(facingAngle) * 0.15;
+      const offsetZ = Math.cos(facingAngle) * 0.15;
 
       vendorPositions.push({
         x: stall.x + offsetX,
         z: stall.z + offsetZ,
-        rotY: facingAngle + Math.PI,
+        rotY: facingAngle,
       });
     }
 
-    // Load both GLTF vendor models (Chef Chen and Lao Wang)
+    // Load rich palette of vendor models (Lao Wang, Chef Chen, and 7 Comical Vendors)
     const loader = new GLTFLoader();
-    const modelUrls = {
-      chef: '/assets/models/chef_chen.glb',
-      lao: '/assets/models/lao_wang.glb',
+    const vendorPaths = [
+      '/models/vendors/lao_wang.glb',
+      '/models/vendors/chef_chen.glb',
+      '/models/comical_vendor/vendor_green.glb',
+      '/models/comical_vendor/vendor_blue.glb',
+      '/models/comical_vendor/vendor_yellow.glb',
+      '/models/comical_vendor/vendor_curly.glb',
+      '/models/comical_vendor/vendor_orange.glb',
+      '/models/comical_vendor/vendor_vest.glb',
+      '/models/comical_vendor/vendor_round.glb',
+    ];
+
+    const loadSingle = async (path: string) => {
+      try {
+        return await loader.loadAsync(path);
+      } catch {
+        // Fallback to /assets/models/ if needed
+        const fallback = path.replace('/models/vendors/', '/assets/models/');
+        return await loader.loadAsync(fallback);
+      }
     };
 
-    Promise.all([
-      loader.loadAsync(modelUrls.chef).catch(() => loader.loadAsync('/models/vendors/chef_chen.glb')),
-      loader.loadAsync(modelUrls.lao).catch(() => loader.loadAsync('/models/vendors/lao_wang.glb')),
-    ]).then(([chefGltf, laoGltf]) => {
-      console.log(`[World] Successfully loaded vendor GLB models! Populating ${vendorPositions.length} stalls...`);
+    Promise.all(vendorPaths.map((p) => loadSingle(p).catch(() => null))).then((loadedGltfs) => {
+      const validGltfs = loadedGltfs.filter((g): g is NonNullable<typeof g> => g !== null);
+      if (validGltfs.length === 0) return;
+
+      const laoGltf = loadedGltfs[0] ?? validGltfs[0];
+      const chefGltf = loadedGltfs[1] ?? validGltfs[0];
+
+      console.log(`[World] Successfully loaded ${validGltfs.length} vendor GLB models! Populating ${vendorPositions.length} stalls...`);
 
       // Spawn Lao Wang at his central antique pavilion stall (100.0, 0, 124.0)
-      // Pavilion center is (100.0, 124.0), counter is at z = 124.3 (extends to z=124.95), platform is from 122.2 to 125.8
-      // Position Lao Wang comfortably on the other side of the counter at z = 125.55 (facing towards counter/South: rotY = Math.PI)
       const centralLaoWang = laoGltf.scene.clone(true);
-      centralLaoWang.position.set(100.0, 0.0, 125.55); // On the other side of the counter
+      centralLaoWang.position.set(100.0, 0.18, 125.55); // Elevated on stone platform behind counter
       centralLaoWang.rotation.set(0, Math.PI, 0);
       centralLaoWang.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
@@ -618,35 +662,44 @@ export class World {
 
       // Setup Idle animation on central Lao Wang
       let centralMixer: THREE.AnimationMixer | undefined;
+      let centralIdleAction: THREE.AnimationAction | undefined;
       if (laoGltf.animations && laoGltf.animations.length > 0) {
         centralMixer = new THREE.AnimationMixer(centralLaoWang);
         const idleClip = laoGltf.animations.find((a) => a.name === 'Idle') ?? laoGltf.animations[0];
-        centralMixer.clipAction(idleClip).play();
+        centralIdleAction = centralMixer.clipAction(idleClip);
+        centralIdleAction.play();
         this.vendorMixers.push(centralMixer);
       }
       this.vendorEntries.push({
         root: centralLaoWang,
         mixer: centralMixer,
+        clips: laoGltf.animations,
+        idleAction: centralIdleAction,
+        npcId: 'lao_wang',
         x: 100.0,
         z: 125.55,
         isCentral: true,
       });
 
-      // Populate every stall with Chef Chen and Lao Wang models alternately
+      // Populate every stall cycling through the vendor palette
       for (let i = 0; i < vendorPositions.length; i++) {
         const vp = vendorPositions[i];
-        const isChef = i % 2 === 0;
-        const sourceGltf = isChef ? chefGltf : laoGltf;
+        // Near Chef Chen's location (x=70, z=110), ensure Chef Chen is placed
+        const isNearChefChen = Math.hypot(vp.x - 70, vp.z - 110) < 6.0;
+        const sourceGltf = isNearChefChen
+          ? chefGltf
+          : validGltfs[i % validGltfs.length];
 
         const clone = sourceGltf.scene.clone(true);
-        clone.position.set(vp.x, 0.0, vp.z);
+        // Elevated on Y so vendors comfortably tower over the counter and aren't sunken/too short
+        clone.position.set(vp.x, 0.22, vp.z);
         // Models face +Z by default; rotate by vp.rotY to face into corridor
         clone.rotation.set(0, vp.rotY, 0);
 
         clone.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             child.castShadow = false; // Background vendors are sheltered under stall canopies
-            child.receiveShadow = false; // Background vendors under canopy skip shadow calculation
+            child.receiveShadow = false;
           }
         });
         // Initial visibility based on distance from spawn (100, 100)
@@ -656,18 +709,22 @@ export class World {
 
         // Play Idle animation with slight random time offset
         let mixer: THREE.AnimationMixer | undefined;
+        let idleAction: THREE.AnimationAction | undefined;
         if (sourceGltf.animations && sourceGltf.animations.length > 0) {
           mixer = new THREE.AnimationMixer(clone);
           const idleClip = sourceGltf.animations.find((a) => a.name === 'Idle') ?? sourceGltf.animations[0];
-          const action = mixer.clipAction(idleClip);
-          action.time = Math.random() * 4.0; // Desynchronize animations naturally
-          action.play();
+          idleAction = mixer.clipAction(idleClip);
+          idleAction.time = Math.random() * 4.0; // Desynchronize animations naturally
+          idleAction.play();
           this.vendorMixers.push(mixer);
         }
 
         this.vendorEntries.push({
           root: clone,
           mixer,
+          clips: sourceGltf.animations,
+          idleAction,
+          npcId: isNearChefChen ? 'chef_chen' : `vendor_${i}`,
           x: vp.x,
           z: vp.z,
           isCentral: false,
@@ -679,93 +736,174 @@ export class World {
   }
 
   /**
-   * Spawns 3D chickens scattered randomly in corridors and plazas.
+   * Spawns 3D running chickens scattered organically across market corridors and open squares.
+   * Chickens actively wander along streets with Run animation, stop to peck seeds with Peck animation,
+   * and panic-flee with PanicRun animation flapping wings when the player approaches!
    */
   private initChickens(): void {
     const loader = new GLTFLoader();
-    const modelUrls = ['/assets/models/chicken.glb', '/models/chicken.glb'];
+
+    const candidatePaths = [
+      '/models/chicken_animated.glb',
+      '/assets/models/chicken_animated/chicken_animated.glb',
+      '/assets/models/chicken.glb',
+      '/models/chicken.glb',
+    ];
 
     const loadChicken = async () => {
-      try {
-        return await loader.loadAsync(modelUrls[0]);
-      } catch {
-        return await loader.loadAsync(modelUrls[1]);
+      for (const path of candidatePaths) {
+        try {
+          return await loader.loadAsync(path);
+        } catch {
+          // try next candidate
+        }
       }
+      throw new Error('All chicken model candidate paths failed');
     };
 
-    loadChicken().then((gltf) => {
-      console.log('[World] Successfully loaded Chicken 3D model! Scattering chickens...');
+    loadChicken()
+      .then((gltf) => {
+        console.log('[World] Successfully loaded Animated Chicken GLB! Scattering running chickens...');
 
-      // Candidate spots across the market corridors and open squares
-      const chickenSpawnSpots: Array<{ x: number; z: number }> = [
-        // South entrance street (walkway ~98..102, z ~65..95)
-        { x: 99.2, z: 68.5 },
-        { x: 101.3, z: 76.0 },
-        { x: 98.7, z: 84.5 },
-        { x: 100.8, z: 92.0 },
+        // Candidate spots across the market corridors and open squares
+        const chickenSpawnSpots: Array<{ x: number; z: number }> = [
+          // South entrance street (player spawns at x=100, z=66)
+          { x: 100.0, z: 72.0 },
+          { x: 99.2, z: 77.0 },
+          { x: 101.0, z: 82.0 },
+          { x: 98.8, z: 88.0 },
+          { x: 100.5, z: 93.0 },
 
-        // Central crossroads
-        { x: 98.5, z: 98.5 },
-        { x: 101.8, z: 102.2 },
+          // Central crossroads
+          { x: 98.5, z: 98.5 },
+          { x: 101.8, z: 102.2 },
 
-        // West corridor
-        { x: 89.0, z: 99.2 },
-        { x: 81.5, z: 101.1 },
-        { x: 74.0, z: 98.8 },
+          // West corridor
+          { x: 89.0, z: 99.2 },
+          { x: 81.5, z: 101.1 },
+          { x: 74.0, z: 98.8 },
 
-        // West plaza
-        { x: 63.5, z: 95.0 },
-        { x: 58.0, z: 104.5 },
-        { x: 66.0, z: 108.0 },
-        { x: 53.5, z: 99.0 },
+          // West plaza
+          { x: 63.5, z: 95.0 },
+          { x: 58.0, z: 104.5 },
+          { x: 66.0, z: 108.0 },
+          { x: 53.5, z: 99.0 },
 
-        // East corridor
-        { x: 111.0, z: 101.4 },
-        { x: 118.5, z: 98.7 },
-        { x: 124.0, z: 100.5 },
+          // East corridor
+          { x: 111.0, z: 101.4 },
+          { x: 118.5, z: 98.7 },
+          { x: 124.0, z: 100.5 },
 
-        // East plaza
-        { x: 136.0, z: 96.0 },
-        { x: 144.5, z: 105.0 },
-        { x: 139.0, z: 108.5 },
-        { x: 147.0, z: 98.5 },
+          // East plaza
+          { x: 136.0, z: 96.0 },
+          { x: 144.5, z: 105.0 },
+          { x: 139.0, z: 108.5 },
+          { x: 147.0, z: 98.5 },
 
-        // North plaza & bazaar
-        { x: 95.5, z: 112.0 },
-        { x: 104.2, z: 115.5 },
-        { x: 91.0, z: 122.0 },
-        { x: 109.5, z: 121.5 },
-        { x: 98.0, z: 130.5 },
-        { x: 103.0, z: 134.0 },
-        { x: 86.5, z: 128.0 },
-        { x: 114.0, z: 131.0 },
-        { x: 96.0, z: 140.0 },
-        { x: 104.5, z: 141.5 },
-      ];
+          // North plaza & bazaar
+          { x: 95.5, z: 112.0 },
+          { x: 104.2, z: 115.5 },
+          { x: 91.0, z: 122.0 },
+          { x: 109.5, z: 121.5 },
+          { x: 98.0, z: 130.5 },
+          { x: 103.0, z: 134.0 },
+          { x: 86.5, z: 128.0 },
+          { x: 114.0, z: 131.0 },
+          { x: 96.0, z: 140.0 },
+          { x: 104.5, z: 141.5 },
+        ];
 
-      // Original chicken model height is ~189 units.
-      // Scaling by ~0.003 brings chicken height to ~0.55m, which looks great and lifelike in the market!
-      const chickenScale = 0.0032;
+        const runClip =
+          THREE.AnimationClip.findByName(gltf.animations, 'Run') ?? gltf.animations[0];
+        const peckClip =
+          THREE.AnimationClip.findByName(gltf.animations, 'Peck') ?? gltf.animations[0];
+        const panicClip =
+          THREE.AnimationClip.findByName(gltf.animations, 'PanicRun') ?? runClip;
 
-      const chickenTransforms: Array<{ position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }> = [];
-      for (let i = 0; i < chickenSpawnSpots.length; i++) {
-        const spot = chickenSpawnSpots[i];
-        const randJitterX = Math.sin(i * 19.3) * 0.8;
-        const randJitterZ = Math.cos(i * 27.7) * 0.8;
-        const randomRotY = (i * 1.6180339887) % (Math.PI * 2);
+        for (let i = 0; i < chickenSpawnSpots.length; i++) {
+          const spot = chickenSpawnSpots[i];
+          const randJitterX = Math.sin(i * 19.3) * 0.8;
+          const randJitterZ = Math.cos(i * 27.7) * 0.8;
+          const randomYaw = (i * 1.6180339887) % (Math.PI * 2);
 
-        chickenTransforms.push({
-          position: new THREE.Vector3(spot.x + randJitterX, 0.0, spot.z + randJitterZ),
-          rotation: new THREE.Euler(0, randomRotY, 0),
-          scale: new THREE.Vector3(chickenScale, chickenScale, chickenScale),
-        });
-      }
+          const chicken = SkeletonUtils.clone(gltf.scene);
+          const posX = spot.x + randJitterX;
+          const posZ = spot.z + randJitterZ;
+          chicken.position.set(posX, 0.0, posZ);
+          chicken.rotation.set(0, randomYaw, 0);
 
-      const chickensGroup = this.createInstancedFromGLTF(gltf.scene, chickenTransforms, true, true);
-      this.scene.add(chickensGroup);
-    }).catch((err) => {
-      console.warn('[World] Failed to load chicken GLTF model:', err);
-    });
+          chicken.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+          this.scene.add(chicken);
+
+          if (gltf.animations && gltf.animations.length > 0) {
+            const mixer = new THREE.AnimationMixer(chicken);
+
+            const runAction = mixer.clipAction(runClip);
+            runAction.setLoop(THREE.LoopRepeat, Infinity);
+
+            const peckAction = mixer.clipAction(peckClip);
+            peckAction.setLoop(THREE.LoopRepeat, Infinity);
+
+            const panicAction = mixer.clipAction(panicClip);
+            panicAction.setLoop(THREE.LoopRepeat, Infinity);
+
+            // Randomize starting state between run (60%) and peck (40%)
+            const startsRunning = i % 5 !== 0;
+            const initialState: 'run' | 'peck' = startsRunning ? 'run' : 'peck';
+            const currentAction = startsRunning ? runAction : peckAction;
+
+            // Desynchronize initial playback times across chickens
+            runAction.time = (i * 0.17) % (runClip.duration || 0.72);
+            peckAction.time = (i * 0.43) % (peckClip.duration || 2.4);
+            panicAction.time = (i * 0.11) % (panicClip.duration || 0.52);
+
+            currentAction.play();
+
+            this.chickenEntries.push({
+              root: chicken,
+              mixer,
+              runAction,
+              peckAction,
+              panicAction,
+              currentAction,
+              state: initialState,
+              stateTimer: 2.0 + (i % 4) * 1.2,
+              panicTimer: 0,
+              x: posX,
+              z: posZ,
+              currentYaw: randomYaw,
+              targetYaw: randomYaw,
+              homeX: spot.x,
+              homeZ: spot.z,
+              roamRadius: 10.0 + (i % 4) * 3.0,
+            });
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('[World] Failed to load animated chicken GLTF model:', err);
+      });
+  }
+
+  /**
+   * Smoothly cross-fades between chicken animation actions (Run, Peck, PanicRun).
+   */
+  private setChickenAction(
+    chicken: (typeof this.chickenEntries)[number],
+    newAction: THREE.AnimationAction,
+    crossFadeDuration: number = 0.2
+  ): void {
+    if (chicken.currentAction === newAction) return;
+    newAction.reset();
+    newAction.fadeIn(crossFadeDuration);
+    chicken.currentAction.fadeOut(crossFadeDuration);
+    newAction.play();
+    chicken.currentAction = newAction;
   }
 
   /**
@@ -1056,6 +1194,9 @@ export class World {
     // Update animated vendor models selectively (only visible & within range)
     this.updateVendorAnimations(delta);
 
+    // Update animated running chickens across streets and plazas
+    this.updateChickens(delta);
+
     // Render frame
     this.renderer.render(this.scene, this.camera);
   };
@@ -1126,6 +1267,227 @@ export class World {
         vendor.mixer.update(delta);
       }
     }
+  }
+
+  /**
+   * Updates animated running chickens:
+   * 1. Distance culls distant chickens (> 45m)
+   * 2. Reacts to player proximity (< 4.2m) with panic flight away from player
+   * 3. Runs along market streets/plazas, avoids walls and obstacles, periodically pecks ground
+   * 4. Updates skeletal animation mixers
+   */
+  public updateChickens(delta: number, playerX?: number, playerZ?: number): void {
+    if (this.chickenEntries.length === 0) return;
+
+    const px = playerX ?? this.camera.position.x;
+    const pz = playerZ ?? this.camera.position.z;
+    const maxVisibilityDistSq = 80.0 * 80.0; // 80m distance threshold
+    const simDelta = Math.min(delta, 0.1);
+    const wallBoxes = this.getWallBoundingBoxes();
+    const nowMs = performance.now();
+
+    for (let i = 0; i < this.chickenEntries.length; i++) {
+      const chicken = this.chickenEntries[i];
+      const cdx = chicken.x - px;
+      const cdz = chicken.z - pz;
+      const distToPlayerSq = cdx * cdx + cdz * cdz;
+
+      // Distance culling: beyond 80m, hide mesh
+      if (distToPlayerSq > maxVisibilityDistSq) {
+        chicken.root.visible = false;
+        continue;
+      }
+      chicken.root.visible = true;
+
+      // 1. Proximity panic check: player gets within 4.2m (< 17.64 distSq)
+      if (distToPlayerSq < 17.64) {
+        if (chicken.state !== 'panic') {
+          chicken.state = 'panic';
+          chicken.panicTimer = 2.5 + Math.random() * 1.5;
+          this.setChickenAction(chicken, chicken.panicAction, 0.15);
+        } else {
+          chicken.panicTimer = Math.max(chicken.panicTimer, 1.5);
+        }
+
+        // Flee angle: run away from the player with slight erratic wiggle
+        const fleeAngle =
+          Math.atan2(cdx, cdz) + Math.sin(nowMs * 0.006 + i * 2.3) * 0.4;
+        chicken.targetYaw = fleeAngle;
+      }
+
+      // 2. State Machine updates
+      let moveSpeed = 0;
+
+      if (chicken.state === 'panic') {
+        moveSpeed = 4.8; // Fast frantic sprint
+        chicken.panicTimer -= simDelta;
+
+        // If player is still close, keep steering away from player
+        if (distToPlayerSq < 25.0) {
+          chicken.targetYaw =
+            Math.atan2(cdx, cdz) + Math.sin(nowMs * 0.008 + i * 1.7) * 0.35;
+        }
+
+        // Calm down when panic timer expires and player is at safe distance (> 5.5m)
+        if (chicken.panicTimer <= 0 && distToPlayerSq > 30.0) {
+          if (Math.random() < 0.7) {
+            chicken.state = 'run';
+            chicken.stateTimer = 3.0 + Math.random() * 4.0;
+            chicken.targetYaw = chicken.currentYaw + (Math.random() - 0.5) * 1.2;
+            this.setChickenAction(chicken, chicken.runAction, 0.25);
+          } else {
+            chicken.state = 'peck';
+            chicken.stateTimer = 2.4 * (1 + Math.floor(Math.random() * 2));
+            this.setChickenAction(chicken, chicken.peckAction, 0.25);
+          }
+        }
+      } else if (chicken.state === 'run') {
+        moveSpeed = 2.2; // Smooth natural run / trot
+        chicken.stateTimer -= simDelta;
+
+        // Periodic gentle wandering curvature
+        if (Math.sin(nowMs * 0.001 + i * 3.1) > 0.85) {
+          chicken.targetYaw += (Math.random() - 0.5) * 0.2 * simDelta;
+        }
+
+        if (chicken.stateTimer <= 0) {
+          // 30% chance to stop and peck, 70% chance to continue running in new direction
+          if (Math.random() < 0.30) {
+            chicken.state = 'peck';
+            chicken.stateTimer = 2.4;
+            this.setChickenAction(chicken, chicken.peckAction, 0.25);
+          } else {
+            chicken.targetYaw = Math.random() * Math.PI * 2;
+            chicken.stateTimer = 3.5 + Math.random() * 4.5;
+          }
+        }
+      } else if (chicken.state === 'peck') {
+        moveSpeed = 0; // Standing still pecking ground
+        chicken.stateTimer -= simDelta;
+
+        if (chicken.stateTimer <= 0) {
+          chicken.state = 'run';
+          chicken.targetYaw = Math.random() * Math.PI * 2;
+          chicken.stateTimer = 3.5 + Math.random() * 4.0;
+          this.setChickenAction(chicken, chicken.runAction, 0.25);
+        }
+      }
+
+      // 3. Smooth Yaw Rotation towards targetYaw (Forward is +Z)
+      let diff = chicken.targetYaw - chicken.currentYaw;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      const turnSpeed = chicken.state === 'panic' ? 10.0 : 6.0;
+      const maxTurn = turnSpeed * simDelta;
+      if (Math.abs(diff) <= maxTurn) {
+        chicken.currentYaw = chicken.targetYaw;
+      } else {
+        chicken.currentYaw += Math.sign(diff) * maxTurn;
+      }
+      chicken.root.rotation.set(0, chicken.currentYaw, 0);
+
+      // 4. Movement, Boundaries & Obstacle Avoidance
+      if (moveSpeed > 0) {
+        const step = moveSpeed * simDelta;
+        const forwardX = Math.sin(chicken.currentYaw);
+        const forwardZ = Math.cos(chicken.currentYaw);
+        const nextX = chicken.x + forwardX * step;
+        const nextZ = chicken.z + forwardZ * step;
+
+        // Check map limits [4, 196]
+        if (nextX < 4.0 || nextX > 196.0 || nextZ < 4.0 || nextZ > 196.0) {
+          chicken.targetYaw = Math.atan2(100.0 - chicken.x, 100.0 - chicken.z);
+        } else {
+          // Check roaming boundary from home spawn spot
+          const hdx = nextX - chicken.homeX;
+          const hdz = nextZ - chicken.homeZ;
+          const distHomeSq = hdx * hdx + hdz * hdz;
+
+          if (distHomeSq > chicken.roamRadius * chicken.roamRadius) {
+            // Steer back towards home
+            chicken.targetYaw =
+              Math.atan2(chicken.homeX - chicken.x, chicken.homeZ - chicken.z) +
+              (Math.random() - 0.5) * 0.4;
+          }
+
+          // Check wall / stall collision (AABB)
+          let collidesWithWall = false;
+          const chickenRadius = 0.25;
+          for (let b = 0; b < wallBoxes.length; b++) {
+            const box = wallBoxes[b];
+            if (
+              nextX + chickenRadius >= box.min.x &&
+              nextX - chickenRadius <= box.max.x &&
+              nextZ + chickenRadius >= box.min.z &&
+              nextZ - chickenRadius <= box.max.z
+            ) {
+              collidesWithWall = true;
+              // If already penetrating/stuck inside, reorient towards open world center
+              if (
+                chicken.x + chickenRadius >= box.min.x &&
+                chicken.x - chickenRadius <= box.max.x &&
+                chicken.z + chickenRadius >= box.min.z &&
+                chicken.z - chickenRadius <= box.max.z
+              ) {
+                chicken.targetYaw = Math.atan2(100.0 - chicken.x, 100.0 - chicken.z);
+                chicken.currentYaw = chicken.targetYaw;
+              }
+              break;
+            }
+          }
+
+          if (collidesWithWall) {
+            // Deflect / bounce away from wall
+            chicken.targetYaw =
+              chicken.currentYaw + Math.PI * 0.75 + (Math.random() - 0.5) * 0.5;
+            chicken.stateTimer = Math.min(chicken.stateTimer, 1.2);
+          } else {
+            // Advance forward
+            chicken.x = nextX;
+            chicken.z = nextZ;
+            chicken.root.position.set(chicken.x, 0.0, chicken.z);
+          }
+        }
+      }
+
+      // 5. Update animation mixer
+      chicken.mixer.update(simDelta);
+    }
+  }
+
+  /**
+   * Triggers an animated NPC gesture (Wave greeting, Angry disagreement, or Idle).
+   */
+  public triggerNpcReaction(npcId: string, reaction: 'Wave' | 'Angry' | 'Idle'): void {
+    const entry =
+      this.vendorEntries.find((e) => e.npcId === npcId) ??
+      (npcId === 'lao_wang' ? this.vendorEntries.find((e) => e.isCentral) : null) ??
+      this.vendorEntries[0];
+
+    if (!entry || !entry.mixer || !entry.clips) return;
+
+    const clip = THREE.AnimationClip.findByName(entry.clips, reaction);
+    if (!clip) return;
+
+    const action = entry.mixer.clipAction(clip);
+    action.reset();
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = false;
+
+    if (entry.idleAction) {
+      action.crossFadeFrom(entry.idleAction, 0.2, true);
+    }
+    action.play();
+
+    const onFinished = (e: any) => {
+      if (e.action === action) {
+        entry.mixer?.removeEventListener('finished', onFinished);
+        if (entry.idleAction) {
+          entry.idleAction.reset().fadeIn(0.25).play();
+        }
+      }
+    };
+    entry.mixer.addEventListener('finished', onFinished);
   }
 
   /**
@@ -1220,6 +1582,9 @@ export class World {
     // Update animated vendor models selectively (only visible & within range)
     this.updateVendorAnimations(delta);
 
+    // Update animated running chickens across streets and plazas
+    this.updateChickens(delta, playerX, playerZ);
+
     for (const listener of this.updateListeners) {
       listener(delta);
     }
@@ -1292,12 +1657,25 @@ export class World {
   }
 
   /**
+   * Returns current count of spawned chickens.
+   */
+  public getChickensCount(): number {
+    return this.chickenEntries.length;
+  }
+
+  /**
    * Disposes all Three.js resources, listeners, and removes canvas element.
    */
   public dispose(): void {
     this.stop();
     window.removeEventListener('resize', this.onResize);
     this.updateListeners = [];
+
+    // Stop and clear all chicken animations
+    for (const chicken of this.chickenEntries) {
+      chicken.mixer.stopAllAction();
+    }
+    this.chickenEntries = [];
 
     // Dispose chunk streamer and all active chunks
     this.chunkStreamer?.dispose();
@@ -1315,9 +1693,13 @@ export class World {
       }
     });
 
-    if (this.renderer.domElement.parentElement) {
+    if (this.renderer?.domElement?.parentElement) {
       this.renderer.domElement.parentElement.removeChild(this.renderer.domElement);
     }
-    this.renderer.dispose();
+    try {
+      this.renderer?.dispose();
+    } catch {
+      // In headless test environments WebGL cleanup may lack window animation context
+    }
   }
 }

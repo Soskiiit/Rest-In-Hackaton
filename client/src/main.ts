@@ -912,6 +912,8 @@ class Application {
     }
 
     this.playTTSAudio(payload);
+    const reaction = (payload.aggro ?? 0) >= 40 ? 'Angry' : 'Wave';
+    this.world.triggerNpcReaction?.(payload.npc_id, reaction);
     this.setModalActive(true);
     this.hideInteractionPrompt();
 
@@ -991,6 +993,8 @@ class Application {
 
     // 3. Play TTS audio from AI service (Base64 WAV)
     this.playTTSAudio(payload);
+    const reaction = (payload.aggro ?? 0) >= 40 ? 'Angry' : 'Wave';
+    this.world.triggerNpcReaction?.(payload.npc_id, reaction);
 
     // 4. Open DialogueUI
     this.dialogueUI.open(
