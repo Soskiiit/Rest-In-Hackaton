@@ -145,7 +145,22 @@ func (h *Hub) finishDialogue(e aiDone) {
 	c.turn = turnID(s)
 	c.activeNPC = relation.NPCID
 	c.choices = append([]game.Choice{}, e.reply.Choices...)
-	speech := Speech{NPCID: relation.NPCID, PlayerID: c.player.ID, Tokens: e.reply.Tokens, Choices: c.choices, TurnID: c.turn, Emotion: e.reply.Emotion, Mianzi: relation.Mianzi, Aggro: relation.Aggro, Price: relation.Price, State: relation.State, Fallback: e.fallback, Offers: h.offers(relation.NPCID), SceneVersion: shared.Version}
+	speech := Speech{
+		NPCID:        relation.NPCID,
+		PlayerID:     c.player.ID,
+		Tokens:       e.reply.Tokens,
+		Choices:      c.choices,
+		TurnID:       c.turn,
+		Emotion:      e.reply.Emotion,
+		Mianzi:       relation.Mianzi,
+		Aggro:        relation.Aggro,
+		Price:        relation.Price,
+		State:        relation.State,
+		Fallback:     e.fallback,
+		Offers:       h.offers(relation.NPCID),
+		SceneVersion: shared.Version,
+		AudioBase64:  e.reply.AudioBase64,
+	}
 	for _, observer := range h.nearby(npc.X, npc.Z, speechRadius) {
 		if !game.Near(observer.player.X, observer.player.Z, npc.X, npc.Z, speechRadius) {
 			continue

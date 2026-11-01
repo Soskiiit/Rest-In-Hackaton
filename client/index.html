@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Rest-In-Hackaton | Shenzhen Night Market 3D</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏮</text></svg>" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <!-- 3D WebGL Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <!-- Center Screen Aim Crosshair -->
+    <div id="crosshair"></div>
+
+    <!-- HUD Overlay (Jury & Diagnostics - Top Right) -->
+    <div id="hud">
+      <div class="hud-header">
+        <span class="hud-title">SHENZHEN 3D // HUD</span>
+        <span id="hud-status" class="status-pill status-disconnected">WS: OFFLINE</span>
+      </div>
+      <div class="hud-body">
+        <div class="hud-row">
+          <span class="hud-label">FPS:</span>
+          <span id="hud-fps" class="hud-val">0</span>
+        </div>
+        <div class="hud-row">
+          <span class="hud-label">КЕШ ПАМЯТИ:</span>
+          <span id="hud-cache" class="hud-val">0%</span>
+          <span id="hud-cache-badge" class="badge-ok">ЛИМИТ 10% OK</span>
+        </div>
+        <div class="hud-row">
+          <span class="hud-label">ЧАНКИ В СЦЕНЕ:</span>
+          <span id="hud-chunks" class="hud-val">0 / 100</span>
+        </div>
+        <div class="hud-row">
+          <span class="hud-label">КООРДИНАТЫ:</span>
+          <span id="hud-coords" class="hud-val">(100.0, 100.0)</span>
+        </div>
+        <div class="hud-row">
+          <span class="hud-label">БАЛАНС:</span>
+          <span id="hud-balance" class="hud-val currency">500 ¥</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Interactive Proximity Prompt Badge (Center-Bottom) -->
+    <div id="interaction-prompt" class="interaction-prompt hidden">
+      <span class="key-badge">E</span>
+      <span id="prompt-text">Взаимодействовать</span>
+    </div>
+
+    <!-- Dialogue UI Overlay (Stage 3 - Lao Wang & NPC Conversations) -->
+    <div id="dialogue-overlay" class="dialogue-overlay hidden">
+      <button id="dialogue-close-btn" class="dialogue-close-btn" title="Закрыть (Esc)">✕</button>
+      <div class="dialogue-header">
+        <div class="dialogue-title-wrap">
+          <span class="npc-lantern">🏮</span>
+          <span id="dialogue-npc-name" class="npc-name">ЛАО ВАН (老王)</span>
+        </div>
+        <div class="dialogue-gauges">
+          <div class="gauge-box">
+            <span class="gauge-label">🎭 Уважение (Mianzi):</span>
+            <div class="meter-bar">
+              <div id="dialogue-mianzi-fill" class="meter-fill mianzi-fill" style="width: 50%;"></div>
+            </div>
+            <span id="dialogue-mianzi-val" class="gauge-val">50%</span>
+          </div>
+          <div class="gauge-box">
+            <span class="gauge-label">😠 Ярость (Aggro):</span>
+            <div class="meter-bar">
+              <div id="dialogue-aggro-fill" class="meter-fill aggro-fill" style="width: 0%;"></div>
+            </div>
+            <span id="dialogue-aggro-val" class="gauge-val">0%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Two-line Subtitle Cards -->
+      <div class="subtitles-container">
+        <!-- Line 1: Chinese + Pinyin -->
+        <div class="subtitle-card card-original">
+          <div class="subtitle-badge">ОРИГИНАЛ (中文 + PINYIN)</div>
+          <div id="dialogue-line-original" class="subtitle-text zh-text">
+            你好，朋友！(Nǐ hǎo, péngyou!)
+          </div>
+        </div>
+
+        <!-- Line 2: Russian translation with [???] for unlearned words -->
+        <div class="subtitle-card card-translated">
+          <div class="subtitle-badge">ВАШ СЛОВАРЬ (РУССКИЙ)</div>
+          <div id="dialogue-line-translated" class="subtitle-text ru-text">
+            Привет, друг!
+          </div>
+        </div>
+      </div>
+
+      <!-- Dialogue 4 Choice Buttons -->
+      <div id="dialogue-choices" class="dialogue-choices-grid">
+        <button class="choice-btn" data-choice="1">
+          <span class="choice-num">[1]</span>
+          <span class="choice-text">老板，便宜点吧！ (Босс, сделай скидку!)</span>
+        </button>
+        <button class="choice-btn" data-choice="2">
+          <span class="choice-num">[2]</span>
+          <span class="choice-text">太贵了！ (Слишком дорого!)</span>
+        </button>
+        <button class="choice-btn" data-choice="3">
+          <span class="choice-num">[3]</span>
+          <span class="choice-text">这是正品吗？ (Это оригинал?)</span>
+        </button>
+        <button class="choice-btn" data-choice="4">
+          <span class="choice-num">[4]</span>
+          <span class="choice-text">我再看看。 (Я ещё посмотрю.)</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Quiz Panel Overlay (Stage 4 - Item Vocabulary Inspection) -->
+    <div id="quiz-overlay" class="quiz-overlay hidden">
+      <div class="quiz-card">
+        <div class="quiz-header">
+          <span class="quiz-icon">🔍</span>
+          <span id="quiz-title" class="quiz-title">Осмотр предмета: Антикварный чайник</span>
+        </div>
+        <div class="quiz-body">
+          <div class="quiz-word-prompt">
+            <div id="quiz-word-zh" class="quiz-zh">茶壶</div>
+            <div id="quiz-word-py" class="quiz-py">Cháhú</div>
+            <div class="quiz-question">Как переводится это слово?</div>
+          </div>
+          <div id="quiz-options" class="quiz-options-grid"></div>
+          <div id="quiz-feedback" class="quiz-feedback hidden"></div>
+        </div>
+        <div class="quiz-footer">
+          <button id="quiz-close-btn" class="cyber-btn">Закрыть [Esc]</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pointer Lock Blocker & Instructions (Click to Play) -->
+    <div id="blocker" class="blocker">
+      <div id="instructions" class="instructions-card">
+        <div class="cyber-badge">3D SHOWCASE // DEMO MODE</div>
+        <h1 class="game-title">REST IN HACKATON</h1>
+        <h2 class="game-subtitle">Китайский на сдачу</h2>
+        
+        <div class="prompt-pulse">▶ Начать игру ◀</div>
+
+        <!-- Текущий игрок и выход из аккаунта (видно после входа) -->
+        <div id="auth-status" class="auth-status hidden">
+          <span>Вы вошли как <b id="auth-status-login"></b></span>
+          <button id="logout-btn" class="cyber-btn" type="button">Выйти</button>
+        </div>
+
+        <div class="controls-guide">
+          <div class="guide-item">
+            <div class="keys-group">
+              <span class="key-badge">W</span>
+              <span class="key-badge">A</span>
+              <span class="key-badge">S</span>
+              <span class="key-badge">D</span>
+            </div>
+            <span class="guide-desc">Перемещение персонажа</span>
+          </div>
+          <div class="guide-item">
+            <div class="keys-group">
+              <span class="key-badge">Мышь</span>
+            </div>
+            <span class="guide-desc">Управление взглядом (Pointer Lock)</span>
+          </div>
+          <div class="guide-item">
+            <div class="keys-group">
+              <span class="key-badge">Space</span>
+            </div>
+            <span class="guide-desc">Прыжок</span>
+          </div>
+          <div class="guide-item">
+            <div class="keys-group">
+              <span class="key-badge">E</span>
+              <span class="key-badge">F</span>
+            </div>
+            <span class="guide-desc">Взаимодействие с NPC / Осмотр предметов</span>
+          </div>
+          <div class="guide-item">
+            <div class="keys-group">
+              <span class="key-badge">1</span>..<span class="key-badge">4</span>
+            </div>
+            <span class="guide-desc">Выбор реплик в диалоге / ответов в квизе</span>
+          </div>
+          <div class="guide-item">
+            <div class="keys-group">
+              <span class="key-badge">Esc</span>
+            </div>
+            <span class="guide-desc">Освободить курсор мыши</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notification Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Application Bootstrap Entry Point -->
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

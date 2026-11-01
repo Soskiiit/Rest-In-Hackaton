@@ -3,7 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
+	"hackaton/server/internal/testdb"
 	"testing"
 	"time"
 
@@ -16,7 +16,7 @@ func TestObservedSpeechDoesNotInvalidateOwnDialogue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := db.Open(filepath.Join(t.TempDir(), "game.db"))
+	store, err := db.Open(testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,6 +25,7 @@ func TestObservedSpeechDoesNotInvalidateOwnDialogue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	player.X, player.Z = 100, 124
 	c := &client{player: player, ctx: context.Background(), done: make(chan struct{}), send: make(chan []byte, 16),
 		expires: time.Now().Add(time.Hour), known: map[string]bool{}, activeNPC: "lao_wang",
 		turn: "own-valid-turn", choices: game.Choices(), speech: &Speech{NPCID: "another_npc"}}

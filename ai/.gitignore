@@ -1,0 +1,9 @@
+# Ignore large neural model weights
+kokoro/*.onnx
+kokoro/*.bin
+*.wav
+
+# Local virtual environments & bytecode
+.venv/
+__pycache__/
+*.pyc

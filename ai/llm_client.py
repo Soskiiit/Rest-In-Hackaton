@@ -3,7 +3,8 @@ ai/llm_client.py
 OpenAI-Compatible LLM Client for Rest-In-Hackaton DEV-B AI Middleware.
 
 Connects to llama-server on http://127.0.0.1:8080/v1/chat/completions.
-Provides resilient timeout handling, regex markdown fence stripping,
+Configured for fast Qwen3.5 inference with thinking token suppression,
+resilient timeout handling, regex markdown/thinking stripping,
 and structured JSON parsing.
 """
 
@@ -17,18 +18,106 @@ import httpx
 
 logger = logging.getLogger("ai.llm_client")
 
-# Defaults configurable via environment variables
-DEFAULT_LLAMA_SERVER_URL = os.getenv(
-    "LLAMA_SERVER_URL", "http://127.0.0.1:8080/v1/chat/completions"
-)
-DEFAULT_LLAMA_HEALTH_URL = os.getenv(
-    "LLAMA_HEALTH_URL", "http://127.0.0.1:8080/health"
-)
-DEFAULT_MODEL = os.getenv(
-    "LLM_MODEL", "unsloth/Qwen3.5-4B-MTP-GGUF:Q5_K_M"
-)
+def resolve_llm_endpoints(
+    llama_server_url: Optional[str] = None,
+    ollama_url: Optional[str] = None,
+    openai_base_url: Optional[str] = None,
+    health_url: Optional[str] = None,
+) -> Tuple[str, str]:
+    """
+    Resolves the chat completions endpoint and health probe endpoint.
+    Supports Ollama, OpenAI-compatible servers, and llama-server.
+    Priority:
+    1. OLLAMA_URL / OLLAMA_HOST
+    2. OPENAI_BASE_URL / LLM_BASE_URL
+    3. LLAMA_SERVER_URL
+    4. Default fallback: http://127.0.0.1:8080/v1/chat/completions
+    """
+    raw_ollama = ollama_url or os.getenv("OLLAMA_URL") or os.getenv("OLLAMA_HOST")
+    raw_openai = openai_base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL")
+    raw_llama = llama_server_url or os.getenv("LLAMA_SERVER_URL")
+
+    # Priority 1: OLLAMA_URL
+    if raw_ollama:
+        url = raw_ollama.strip().rstrip("/")
+        if url.endswith("/v1/chat/completions"):
+            completions = url
+            base = url[:-len("/v1/chat/completions")]
+        elif url.endswith("/api/chat"):
+            base = url[:-len("/api/chat")]
+            completions = f"{base}/v1/chat/completions"
+        elif url.endswith("/v1"):
+            base = url[:-len("/v1")]
+            completions = f"{url}/chat/completions"
+        else:
+            base = url
+            completions = f"{url}/v1/chat/completions"
+        health = health_url or os.getenv("LLAMA_HEALTH_URL") or f"{base}/v1/models"
+        return completions, health
+
+    # Priority 2: OPENAI_BASE_URL
+    if raw_openai:
+        url = raw_openai.strip().rstrip("/")
+        if url.endswith("/chat/completions"):
+            completions = url
+            base = url[:-len("/chat/completions")]
+        elif url.endswith("/v1"):
+            completions = f"{url}/chat/completions"
+            base = url
+        else:
+            completions = f"{url}/v1/chat/completions"
+            base = f"{url}/v1"
+        health = health_url or os.getenv("LLAMA_HEALTH_URL") or f"{base}/models"
+        return completions, health
+
+    # Priority 3: LLAMA_SERVER_URL
+    if raw_llama:
+        url = raw_llama.strip().rstrip("/")
+        if url.endswith("/chat/completions"):
+            completions = url
+            base = re.sub(r"/v1.*$", "", url)
+        elif url.endswith("/v1"):
+            completions = f"{url}/chat/completions"
+            base = url[:-len("/v1")]
+        else:
+            completions = f"{url}/v1/chat/completions"
+            base = url
+        health = health_url or os.getenv("LLAMA_HEALTH_URL") or f"{base}/health"
+        return completions, health
+
+    # Default fallback to localhost llama-server
+    completions = "http://127.0.0.1:8080/v1/chat/completions"
+    health = health_url or os.getenv("LLAMA_HEALTH_URL") or "http://127.0.0.1:8080/health"
+    return completions, health
+
+
+def resolve_default_model(model_override: Optional[str] = None) -> str:
+    """Resolves default model name based on LLM_MODEL or detected backend."""
+    if model_override:
+        return model_override
+    env_model = os.getenv("LLM_MODEL")
+    if env_model:
+        return env_model
+    if os.getenv("OLLAMA_URL") or os.getenv("OLLAMA_HOST"):
+        return "qwen3.5:4b"
+    return "unsloth/Qwen3.5-4B-MTP-GGUF:Q5_K_M"
+
+
+# Dynamic defaults computed via resolvers
+_resolved_completions, _resolved_health = resolve_llm_endpoints()
+DEFAULT_LLAMA_SERVER_URL = _resolved_completions
+DEFAULT_LLAMA_HEALTH_URL = _resolved_health
+DEFAULT_MODEL = resolve_default_model()
 DEFAULT_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT", "15.0"))
 DEFAULT_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT", "3.0"))
+
+# Fast Inference Tunings for Qwen3.5
+DEFAULT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
+DEFAULT_TOP_P = float(os.getenv("LLM_TOP_P", "0.8"))
+DEFAULT_PRESENCE_PENALTY = float(os.getenv("LLM_PRESENCE_PENALTY", "1.5"))
+DEFAULT_TOP_K = int(os.getenv("LLM_TOP_K", "20"))
+DEFAULT_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "512"))
+DEFAULT_ENABLE_THINKING = os.getenv("LLM_ENABLE_THINKING", "false").lower() in ("1", "true", "yes")
 
 
 class LLMClientError(Exception):
@@ -64,6 +153,22 @@ class LLMParseError(LLMClientError):
         self.detail = detail
 
 
+def strip_thinking_tokens(content: str) -> str:
+    """
+    Strips reasoning / thinking tokens (e.g. <think>...</think> or [THINK]...[/THINK])
+    generated by reasoning-oriented LLMs like Qwen or DeepSeek.
+    """
+    if not content:
+        return ""
+    # Strip closed <think> ... </think> tags
+    content = re.sub(r"<think>[\s\S]*?</think>", "", content, flags=re.IGNORECASE)
+    # Strip unclosed <think> tag if stream was truncated
+    content = re.sub(r"<think>[\s\S]*$", "", content, flags=re.IGNORECASE)
+    # Strip [THINK] ... [/THINK] alternate syntax
+    content = re.sub(r"\[THINK\][\s\S]*?\[/THINK\]", "", content, flags=re.IGNORECASE)
+    return content.strip()
+
+
 def strip_markdown_fences(content: str) -> str:
     """
     Strips markdown code blocks (e.g. ```json ... ``` or ``` ... ```) from content.
@@ -79,9 +184,10 @@ def strip_markdown_fences(content: str) -> str:
 def extract_json_object(content: str) -> str:
     """
     Extracts the outermost JSON object substring enclosed by '{' and '}'.
-    Removes leading or trailing conversational filler if present.
+    Removes thinking blocks, markdown fences, and leading/trailing conversational filler.
     """
-    cleaned = strip_markdown_fences(content)
+    cleaned = strip_thinking_tokens(content)
+    cleaned = strip_markdown_fences(cleaned)
     first_brace = cleaned.find("{")
     last_brace = cleaned.rfind("}")
     if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
@@ -104,31 +210,40 @@ def parse_llm_json(content: str) -> Dict[str, Any]:
 class LLMClient:
     """
     Asynchronous client for llama-server OpenAI-compatible chat completions API.
+    Enforces thinking token suppression, top_p, presence_penalty, and extra_body params.
     """
 
     def __init__(
         self,
-        completions_url: str = DEFAULT_LLAMA_SERVER_URL,
-        health_url: str = DEFAULT_LLAMA_HEALTH_URL,
-        model: str = DEFAULT_MODEL,
+        completions_url: Optional[str] = None,
+        health_url: Optional[str] = None,
+        model: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
     ):
-        self.completions_url = completions_url
-        self.health_url = health_url
-        self.model = model
+        if completions_url is None or health_url is None:
+            resolved_c, resolved_h = resolve_llm_endpoints(
+                llama_server_url=completions_url,
+                health_url=health_url,
+            )
+            self.completions_url = completions_url or resolved_c
+            self.health_url = health_url or resolved_h
+        else:
+            self.completions_url = completions_url
+            self.health_url = health_url
+        self.model = model or resolve_default_model()
         self.timeout = httpx.Timeout(timeout, connect=connect_timeout)
 
     async def check_health(self) -> bool:
         """
-        Pings llama-server to verify connectivity.
-        Checks /health endpoint, falling back to /v1/models.
+        Pings upstream LLM server to verify connectivity.
+        Checks configured health endpoint, falling back to /v1/models and root /.
         Returns True if reachable and responding, False otherwise.
         """
         probe_timeout = httpx.Timeout(2.0, connect=1.0)
         try:
             async with httpx.AsyncClient(timeout=probe_timeout) as client:
-                # 1. Try health endpoint
+                # 1. Try health endpoint (/health or /v1/models)
                 try:
                     resp = await client.get(self.health_url)
                     if resp.status_code == 200:
@@ -136,10 +251,27 @@ class LLMClient:
                 except httpx.HTTPError:
                     pass
 
-                # 2. Try OpenAI models endpoint
-                models_url = self.completions_url.replace("/chat/completions", "/models")
-                resp = await client.get(models_url)
-                return resp.status_code == 200
+                # 2. Try OpenAI models endpoint (/v1/models)
+                try:
+                    models_url = self.completions_url.replace("/chat/completions", "/models")
+                    if models_url != self.health_url:
+                        resp = await client.get(models_url)
+                        if resp.status_code == 200:
+                            return True
+                except httpx.HTTPError:
+                    pass
+
+                # 3. Try root endpoint (/) for Ollama
+                try:
+                    root_url = re.sub(r"/v1.*$", "/", self.completions_url)
+                    if root_url not in (self.health_url, self.completions_url):
+                        resp = await client.get(root_url)
+                        if resp.status_code == 200:
+                            return True
+                except httpx.HTTPError:
+                    pass
+
+                return False
         except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
             return False
 
@@ -147,11 +279,17 @@ class LLMClient:
         self,
         system_prompt: str,
         user_message: str,
-        temperature: float = 0.7,
-        max_tokens: int = 512,
+        temperature: float = DEFAULT_TEMPERATURE,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        top_p: float = DEFAULT_TOP_P,
+        presence_penalty: float = DEFAULT_PRESENCE_PENALTY,
+        top_k: int = DEFAULT_TOP_K,
+        enable_thinking: bool = DEFAULT_ENABLE_THINKING,
+        extra_body: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], str]:
         """
         Sends chat completion request to llama-server with response_format json_object.
+        Suppresses thinking tokens via top-level and extra_body chat_template_kwargs.
 
         Returns:
             Tuple of (parsed_dict, raw_content_str)
@@ -162,6 +300,13 @@ class LLMClient:
             LLMResponseError: If server responds with 4xx/5xx status
             LLMParseError: If server response or content cannot be parsed as JSON
         """
+        extra_body_dict: Dict[str, Any] = {
+            "top_k": top_k,
+            "chat_template_kwargs": {"enable_thinking": enable_thinking},
+        }
+        if extra_body:
+            extra_body_dict.update(extra_body)
+
         payload = {
             "model": self.model,
             "messages": [
@@ -169,9 +314,16 @@ class LLMClient:
                 {"role": "user", "content": user_message},
             ],
             "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
             "max_tokens": max_tokens,
             "stream": False,
             "response_format": {"type": "json_object"},
+            # Top-level kwargs for llama-server Jinja template
+            "top_k": top_k,
+            "chat_template_kwargs": {"enable_thinking": enable_thinking},
+            # extra_body envelope for vLLM & OpenAI SDK compatibility
+            "extra_body": extra_body_dict,
         }
 
         try:
@@ -214,13 +366,22 @@ __all__ = [
     "DEFAULT_MODEL",
     "DEFAULT_TIMEOUT_SECONDS",
     "DEFAULT_CONNECT_TIMEOUT",
+    "DEFAULT_TEMPERATURE",
+    "DEFAULT_TOP_P",
+    "DEFAULT_PRESENCE_PENALTY",
+    "DEFAULT_TOP_K",
+    "DEFAULT_MAX_TOKENS",
+    "DEFAULT_ENABLE_THINKING",
     "LLMClientError",
     "LLMConnectionError",
     "LLMTimeoutError",
     "LLMResponseError",
     "LLMParseError",
+    "strip_thinking_tokens",
     "strip_markdown_fences",
     "extract_json_object",
     "parse_llm_json",
+    "resolve_llm_endpoints",
+    "resolve_default_model",
     "LLMClient",
 ]

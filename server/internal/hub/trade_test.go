@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"hackaton/server/internal/db"
 	"hackaton/server/internal/game"
-	"path/filepath"
+	"hackaton/server/internal/testdb"
 	"testing"
 	"time"
 )
@@ -16,7 +16,7 @@ func tradeHarness(t *testing.T) (*Hub, *client, *client) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := db.Open(filepath.Join(t.TempDir(), "game.db"))
+	s, err := db.Open(testdb.New(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,6 +28,8 @@ func tradeHarness(t *testing.T) (*Hub, *client, *client) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Dialogue and trade tests run at Lao Wang's central pavilion.
+		p.X, p.Z = 100, 124
 		c := &client{player: p, ctx: context.Background(), done: make(chan struct{}), send: make(chan []byte, 512), known: map[string]bool{}, expires: time.Now().Add(time.Hour)}
 		h.clients[p.ID] = c
 		cs = append(cs, c)

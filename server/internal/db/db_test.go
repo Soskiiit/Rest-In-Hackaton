@@ -3,13 +3,13 @@ package db
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
+	"hackaton/server/internal/testdb"
 	"testing"
 )
 
 func TestPersistenceConstraintsAndTransactions(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "game.db")
+	path := testdb.New(t)
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -75,16 +75,16 @@ func TestPersistenceConstraintsAndTransactions(t *testing.T) {
 	if err = s.SavePositions(ctx, []Player{p}); err != nil {
 		t.Fatal(err)
 	}
-	for pragma, want := range map[string]string{"foreign_keys": "1", "journal_mode": "wal", "synchronous": "2", "busy_timeout": "5000"} {
+	for pragma, want := range map[string]string{"statement_timeout": "10s", "lock_timeout": "5s", "application_name": "rest-in-hackaton"} {
 		var got string
-		if err = s.SQL.QueryRow("PRAGMA " + pragma).Scan(&got); err != nil || got != want {
+		if err = s.SQL.QueryRow("SHOW " + pragma).Scan(&got); err != nil || got != want {
 			t.Fatalf("%s=%s err=%v", pragma, got, err)
 		}
 	}
-	if _, err = s.SQL.Exec("UPDATE players SET balance=320 WHERE id=?", p.ID); err != nil {
+	if _, err = s.SQL.Exec("UPDATE players SET balance=320 WHERE id=$1", p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.SQL.Exec("INSERT INTO inventory(player_id,item_id,price_paid) VALUES(?,?,?)", p.ID, "teapot", 180); err != nil {
+	if _, err = s.SQL.Exec("INSERT INTO inventory(player_id,item_id,price_paid) VALUES($1,$2,$3)", p.ID, "teapot", 180); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Close(); err != nil {
@@ -114,7 +114,7 @@ func TestPersistenceConstraintsAndTransactions(t *testing.T) {
 	if err != nil || len(inventory) != 1 || inventory[0].ID != "teapot" || inventory[0].PricePaid != 180 {
 		t.Fatalf("saved inventory: %+v %v", inventory, err)
 	}
-	if _, err = s.SQL.Exec("DELETE FROM players WHERE id=?", p.ID); err != nil {
+	if _, err = s.SQL.Exec("DELETE FROM players WHERE id=$1", p.ID); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"known_words", "npc_relations", "inventory"} {
@@ -125,8 +125,8 @@ func TestPersistenceConstraintsAndTransactions(t *testing.T) {
 }
 
 func TestMigrationFailureRollsBackSchema(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "conflicting.db")
-	raw, err := sql.Open("sqlite3", path)
+	path := testdb.New(t)
+	raw, err := sql.Open("pgx", path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestMigrationFailureRollsBackSchema(t *testing.T) {
 		t.Fatal("conflicting schema was accepted")
 	}
 	var count int
-	if err = raw.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('players','schema_migrations')").Scan(&count); err != nil || count != 0 {
+	if err = raw.QueryRow("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('players','schema_migrations')").Scan(&count); err != nil || count != 0 {
 		t.Fatalf("failed migration left a partial schema: %d %v", count, err)
 	}
 }

@@ -4,10 +4,13 @@ npm_packages/
 .venv/
 venv/
 .agents/
+
 # DEV-A local runtime and build outputs
 server/data/
+server/backups/
 server/bin/
 server/.env
+
 __pycache__/
 *.pyc
 .DS_Store
@@ -15,3 +18,9 @@ __pycache__/
 # DEV-C
 node_modules/
 dist/
+client/dist/
+client/node_modules/
+
+.run/
+
+server/.run_server
