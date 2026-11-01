@@ -1305,3 +1305,184 @@ html, body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================================
+   PROFILER OVERLAY (Milestone Performance Diagnostics)
+   ============================================================================ */
+
+.cyber-profiler {
+  position: fixed;
+  top: 70px;
+  right: 20px;
+  width: 320px;
+  background: rgba(10, 14, 23, 0.92);
+  border: 1px solid rgba(0, 243, 255, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 15px rgba(0, 243, 255, 0.2);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  z-index: 9999;
+  user-select: none;
+  pointer-events: auto;
+  overflow: hidden;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.profiler-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(0, 243, 255, 0.12);
+  border-bottom: 1px solid rgba(0, 243, 255, 0.25);
+}
+
+.profiler-title {
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--neon-cyan, #00f3ff);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hotkey-badge {
+  font-size: 0.68rem;
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  color: var(--neon-amber, #ffb300);
+}
+
+.profiler-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.profiler-mini-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(0, 243, 255, 0.3);
+  color: #fff;
+  border-radius: 3px;
+  padding: 2px 7px;
+  font-size: 0.65rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.profiler-mini-btn:hover {
+  background: rgba(0, 243, 255, 0.25);
+  border-color: var(--neon-cyan, #00f3ff);
+}
+
+.profiler-content {
+  padding: 10px 12px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.prof-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.prof-metric {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  padding: 5px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.prof-m-label {
+  font-size: 0.58rem;
+  color: var(--text-muted, #8e9bb0);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.prof-m-val {
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin-top: 2px;
+  color: #fff;
+}
+
+.prof-green {
+  color: var(--neon-green, #00ff88) !important;
+}
+
+.prof-amber {
+  color: var(--neon-amber, #ffb300) !important;
+}
+
+.prof-red {
+  color: var(--neon-red, #ff3344) !important;
+}
+
+.prof-breakdown-title {
+  font-size: 0.62rem;
+  letter-spacing: 0.8px;
+  color: var(--text-secondary, #a0aec0);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+}
+
+.prof-subsystems-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.prof-sub-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.prof-sub-label-wrap {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.68rem;
+}
+
+.prof-sub-name {
+  color: #ddd;
+}
+
+.prof-sub-time {
+  font-weight: 600;
+  color: var(--neon-cyan, #00f3ff);
+}
+
+.prof-bar-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.prof-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
+.prof-empty,
+.profiler-loading {
+  text-align: center;
+  color: var(--text-muted, #8e9bb0);
+  padding: 8px;
+}
+

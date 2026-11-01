@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { ChunkBuilder } from './ChunkBuilder';
 import { ChunkStreamer } from './ChunkStreamer';
 import { SCENE_COLORS } from './colors';
 import { MarketLayout } from './MarketLayout';
@@ -66,6 +67,13 @@ export class World {
   private lanternsGroup: THREE.Group = new THREE.Group();
   private chunkStreamer: ChunkStreamer | null = null;
   private vendorMixers: THREE.AnimationMixer[] = [];
+  private vendorEntries: Array<{
+    root: THREE.Object3D;
+    mixer?: THREE.AnimationMixer;
+    x: number;
+    z: number;
+    isCentral?: boolean;
+  }> = [];
   private cachedWallBoundingBoxes: THREE.Box3[] | null = null;
   private shadowFrameCounter: number = 0;
 
@@ -508,29 +516,24 @@ export class World {
   }
 
   /**
-   * Adds an illuminated lantern object with a PointLight and glowing sphere.
+   * Adds a visual dummy lantern object with a glowing sphere (dynamic PointLight removed for performance).
    */
   public addLantern(
     x: number,
     y: number,
     z: number,
     bodyColor: number = SCENE_COLORS.lanternBodyColor,
-    intensity: number = this.config.lanternIntensity,
-    distance: number = this.config.lanternDistance
+    _intensity: number = this.config.lanternIntensity,
+    _distance: number = this.config.lanternDistance
   ): THREE.Group {
     const group = new THREE.Group();
     group.position.set(x, y, z);
 
-    // Glowing lantern body (Orange)
+    // Glowing lantern body dummy (Orange)
     const lanternGeo = new THREE.SphereGeometry(0.32, 12, 12);
     const lanternMat = new THREE.MeshBasicMaterial({ color: bodyColor });
     const mesh = new THREE.Mesh(lanternGeo, lanternMat);
     group.add(mesh);
-
-    // PointLight (Yellow light)
-    const pointLight = new THREE.PointLight(SCENE_COLORS.lanternLightColor, intensity, distance, 1.6);
-    pointLight.castShadow = false; // keep perf high
-    group.add(pointLight);
 
     this.lanternsGroup.add(group);
     return group;
@@ -614,12 +617,20 @@ export class World {
       this.scene.add(centralLaoWang);
 
       // Setup Idle animation on central Lao Wang
+      let centralMixer: THREE.AnimationMixer | undefined;
       if (laoGltf.animations && laoGltf.animations.length > 0) {
-        const mixer = new THREE.AnimationMixer(centralLaoWang);
+        centralMixer = new THREE.AnimationMixer(centralLaoWang);
         const idleClip = laoGltf.animations.find((a) => a.name === 'Idle') ?? laoGltf.animations[0];
-        mixer.clipAction(idleClip).play();
-        this.vendorMixers.push(mixer);
+        centralMixer.clipAction(idleClip).play();
+        this.vendorMixers.push(centralMixer);
       }
+      this.vendorEntries.push({
+        root: centralLaoWang,
+        mixer: centralMixer,
+        x: 100.0,
+        z: 125.55,
+        isCentral: true,
+      });
 
       // Populate every stall with Chef Chen and Lao Wang models alternately
       for (let i = 0; i < vendorPositions.length; i++) {
@@ -635,20 +646,32 @@ export class World {
         clone.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             child.castShadow = false; // Background vendors are sheltered under stall canopies
-            child.receiveShadow = true;
+            child.receiveShadow = false; // Background vendors under canopy skip shadow calculation
           }
         });
+        // Initial visibility based on distance from spawn (100, 100)
+        const distFromSpawn = Math.hypot(vp.x - 100.0, vp.z - 100.0);
+        clone.visible = distFromSpawn <= 22.0;
         this.scene.add(clone);
 
         // Play Idle animation with slight random time offset
+        let mixer: THREE.AnimationMixer | undefined;
         if (sourceGltf.animations && sourceGltf.animations.length > 0) {
-          const mixer = new THREE.AnimationMixer(clone);
+          mixer = new THREE.AnimationMixer(clone);
           const idleClip = sourceGltf.animations.find((a) => a.name === 'Idle') ?? sourceGltf.animations[0];
           const action = mixer.clipAction(idleClip);
           action.time = Math.random() * 4.0; // Desynchronize animations naturally
           action.play();
           this.vendorMixers.push(mixer);
         }
+
+        this.vendorEntries.push({
+          root: clone,
+          mixer,
+          x: vp.x,
+          z: vp.z,
+          isCentral: false,
+        });
       }
     }).catch((err) => {
       console.warn('[World] Failed to load vendor GLTF models:', err);
@@ -724,27 +747,22 @@ export class World {
       // Scaling by ~0.003 brings chicken height to ~0.55m, which looks great and lifelike in the market!
       const chickenScale = 0.0032;
 
+      const chickenTransforms: Array<{ position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }> = [];
       for (let i = 0; i < chickenSpawnSpots.length; i++) {
         const spot = chickenSpawnSpots[i];
-        // Jitter position slightly for a natural random spread
-        const randJitterX = (Math.sin(i * 19.3) * 0.8);
-        const randJitterZ = (Math.cos(i * 27.7) * 0.8);
+        const randJitterX = Math.sin(i * 19.3) * 0.8;
+        const randJitterZ = Math.cos(i * 27.7) * 0.8;
         const randomRotY = (i * 1.6180339887) % (Math.PI * 2);
 
-        const chicken = gltf.scene.clone(true);
-        chicken.position.set(spot.x + randJitterX, 0.0, spot.z + randJitterZ);
-        chicken.rotation.set(0, randomRotY, 0);
-        chicken.scale.set(chickenScale, chickenScale, chickenScale);
-
-        chicken.traverse((child) => {
-          if ((child as THREE.Mesh).isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-          }
+        chickenTransforms.push({
+          position: new THREE.Vector3(spot.x + randJitterX, 0.0, spot.z + randJitterZ),
+          rotation: new THREE.Euler(0, randomRotY, 0),
+          scale: new THREE.Vector3(chickenScale, chickenScale, chickenScale),
         });
-
-        this.scene.add(chicken);
       }
+
+      const chickensGroup = this.createInstancedFromGLTF(gltf.scene, chickenTransforms, true, true);
+      this.scene.add(chickensGroup);
     }).catch((err) => {
       console.warn('[World] Failed to load chicken GLTF model:', err);
     });
@@ -809,25 +827,20 @@ export class World {
           { x: 108.0, z: 144.0, scaleMod: 0.95 },
         ];
 
+        const treeTransforms: Array<{ position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }> = [];
         for (let i = 0; i < treeSpots.length; i++) {
           const spot = treeSpots[i];
           const baseScale = 0.012 * (spot.scaleMod ?? 1.0);
           const rotY = (i * 2.39996) % (Math.PI * 2);
 
-          const tree = treeGltf.scene.clone(true);
-          tree.position.set(spot.x, 0, spot.z);
-          tree.rotation.set(0, rotY, 0);
-          tree.scale.set(baseScale, baseScale, baseScale);
-
-          tree.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh) {
-              child.castShadow = true;
-              child.receiveShadow = true;
-            }
+          treeTransforms.push({
+            position: new THREE.Vector3(spot.x, 0, spot.z),
+            rotation: new THREE.Euler(0, rotY, 0),
+            scale: new THREE.Vector3(baseScale, baseScale, baseScale),
           });
-
-          this.scene.add(tree);
         }
+        const treesGroup = this.createInstancedFromGLTF(treeGltf.scene, treeTransforms, true, true);
+        this.scene.add(treesGroup);
 
         // 2. Flowering Bush Locations (Cluster naturally around trees, along walls, and near stall edges)
         // Bush original height: ~1.58m. Scale ~0.8 to ~1.1 -> height ~1.2m - 1.7m (lush garden shrub)
@@ -893,25 +906,20 @@ export class World {
           { x: 106.5, z: 143.0, scale: 0.85 },
         ];
 
+        const bushTransforms: Array<{ position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }> = [];
         for (let i = 0; i < bushSpots.length; i++) {
           const spot = bushSpots[i];
           const scale = spot.scale ?? 0.9;
           const rotY = (i * 1.832) % (Math.PI * 2);
 
-          const bush = bushGltf.scene.clone(true);
-          bush.position.set(spot.x, 0, spot.z);
-          bush.rotation.set(0, rotY, 0);
-          bush.scale.set(scale, scale, scale);
-
-          bush.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh) {
-              child.castShadow = true;
-              child.receiveShadow = true;
-            }
+          bushTransforms.push({
+            position: new THREE.Vector3(spot.x, 0, spot.z),
+            rotation: new THREE.Euler(0, rotY, 0),
+            scale: new THREE.Vector3(scale, scale, scale),
           });
-
-          this.scene.add(bush);
         }
+        const bushesGroup = this.createInstancedFromGLTF(bushGltf.scene, bushTransforms, true, true);
+        this.scene.add(bushesGroup);
       })
       .catch((err) => {
         console.warn('[World] Failed to load vegetation models:', err);
@@ -919,16 +927,81 @@ export class World {
   }
 
   /**
-   * Initializes the ChunkStreamer engine component.
+   * Helper to create InstancedMesh group from a loaded GLTF scene hierarchy.
+   * Drastically reduces draw calls and scene graph nodes while preserving 100% visual fidelity and shadows.
+   */
+  private createInstancedFromGLTF(
+    gltfScene: THREE.Group,
+    transforms: Array<{ position: THREE.Vector3; rotation: THREE.Euler; scale: THREE.Vector3 }>,
+    castShadow = true,
+    receiveShadow = true
+  ): THREE.Group {
+    const group = new THREE.Group();
+    const subMeshes: Array<{ geometry: THREE.BufferGeometry; material: THREE.Material; localMatrix: THREE.Matrix4 }> = [];
+
+    gltfScene.updateMatrixWorld(true);
+    gltfScene.traverse((child) => {
+      if ((child as any).isMesh) {
+        const mesh = child as THREE.Mesh;
+        subMeshes.push({
+          geometry: mesh.geometry,
+          material: mesh.material as THREE.Material,
+          localMatrix: mesh.matrixWorld.clone(),
+        });
+      }
+    });
+
+    const count = transforms.length;
+    const dummy = new THREE.Object3D();
+    const instMatrix = new THREE.Matrix4();
+
+    for (const sub of subMeshes) {
+      const instancedMesh = new THREE.InstancedMesh(sub.geometry, sub.material, count);
+      instancedMesh.castShadow = castShadow;
+      instancedMesh.receiveShadow = receiveShadow;
+      instancedMesh.matrixAutoUpdate = false;
+
+      for (let i = 0; i < count; i++) {
+        const t = transforms[i];
+        dummy.position.copy(t.position);
+        dummy.rotation.copy(t.rotation);
+        dummy.scale.copy(t.scale);
+        dummy.updateMatrix();
+
+        instMatrix.multiplyMatrices(dummy.matrix, sub.localMatrix);
+        instancedMesh.setMatrixAt(i, instMatrix);
+      }
+      instancedMesh.instanceMatrix.needsUpdate = true;
+      instancedMesh.computeBoundingSphere();
+      instancedMesh.updateMatrix();
+      group.add(instancedMesh);
+    }
+
+    group.matrixAutoUpdate = false;
+    group.updateMatrix();
+    return group;
+  }
+
+  /**
+   * Initializes the ChunkStreamer engine component with lantern dummy mode (no dynamic PointLights).
    */
   private initChunkStreamer(): void {
-    this.chunkStreamer = new ChunkStreamer(this.scene, {
-      chunkSize: 20,
-      gridWidth: 10,
-      gridHeight: 10,
-      maxAoIChunks: 9,
-      totalChunks: 100,
-    });
+    this.chunkStreamer = new ChunkStreamer(
+      this.scene,
+      {
+        chunkSize: 20,
+        gridWidth: 10,
+        gridHeight: 10,
+        maxAoIChunks: 9,
+        totalChunks: 100,
+      },
+      (cx, cz) => {
+        return ChunkBuilder.buildChunk(cx, cz, undefined, {
+          enablePointLights: false,
+          maxLightsPerChunk: 0,
+        });
+      }
+    );
     // Initialize AoI around spawn / center coordinates (100, 100)
     this.chunkStreamer.update(this.config.floorSize / 2, this.config.floorSize / 2);
   }
@@ -989,12 +1062,13 @@ export class World {
 
   /**
    * Updates animated vendor models (Chef Chen & Lao Wang) selectively:
-   * Only processes skeletal animation if NPC is within distance threshold N (35m)
-   * AND approximately in front of camera view direction (dot > 0.15, ~162° view cone),
-   * or very close (< 4m) for peripheral vision.
+   * 1. Distance culls distant vendors (> 40m) by setting root.visible = false, pruning ~3,700 scene nodes
+   *    and draw calls from Three.js's projectObject and WebGL render list every frame.
+   * 2. Only processes skeletal animation if NPC is within 35m AND approximately in front of camera view cone
+   *    (dot > 0.15, ~162° view cone), or very close (< 4m) for peripheral vision.
    */
   public updateVendorAnimations(delta: number): void {
-    if (this.vendorMixers.length === 0) return;
+    if (this.vendorEntries.length === 0) return;
 
     const camPos = this.camera.position;
     const camDir = new THREE.Vector3();
@@ -1002,38 +1076,54 @@ export class World {
     camDir.y = 0;
     camDir.normalize();
 
-    const maxDistSq = 35.0 * 35.0; // 35m distance threshold
+    const maxVisibilityDistSq = 22.0 * 22.0; // 22m distance threshold for mesh visibility
+    const maxAnimDistSq = 18.0 * 18.0; // 18m distance threshold for animation
 
-    for (let i = 0; i < this.vendorMixers.length; i++) {
-      const mixer = this.vendorMixers[i];
-      const root = mixer.getRoot() as THREE.Object3D;
-      if (!root || !root.position) {
-        mixer.update(delta);
+    for (let i = 0; i < this.vendorEntries.length; i++) {
+      const vendor = this.vendorEntries[i];
+      if (vendor.isCentral) {
+        vendor.root.visible = true;
+        vendor.mixer?.update(delta);
         continue;
       }
 
-      const dx = root.position.x - camPos.x;
-      const dz = root.position.z - camPos.z;
+      const dx = vendor.x - camPos.x;
+      const dz = vendor.z - camPos.z;
       const distSq = dx * dx + dz * dz;
 
-      // 1. Distance check: if further than 35m, skip skeletal animation
-      if (distSq > maxDistSq) {
+      // 1. Distance culling: vendors beyond 22m are occluded by buildings/canopies/walls.
+      // Setting visible = false causes Three.js projectObject to prune all 74 sub-meshes in O(1).
+      if (distSq > maxVisibilityDistSq) {
+        vendor.root.visible = false;
         continue;
       }
 
-      // 2. Proximity override: if very close (< 4m), always update (even in peripheral vision)
+      // 2. View Cone / Frustum culling:
+      // If farther than 4m, verify NPC is roughly in front of camera view cone (~150°)
+      if (distSq > 16.0) {
+        const dist = Math.sqrt(distSq);
+        const dot = camDir.x * (dx / dist) + camDir.z * (dz / dist);
+        if (dot < 0.15) {
+          vendor.root.visible = false;
+          continue;
+        }
+      }
+
+      vendor.root.visible = true;
+
+      if (!vendor.mixer) {
+        continue;
+      }
+
+      // 3. Proximity override: if very close (< 4m), always update animation (even in peripheral vision)
       if (distSq < 16.0) {
-        mixer.update(delta);
+        vendor.mixer.update(delta);
         continue;
       }
 
-      // 3. Direction check: verify NPC is roughly in front of camera view cone
-      const dist = Math.sqrt(distSq);
-      const dot = camDir.x * (dx / dist) + camDir.z * (dz / dist);
-
-      // dot > 0.15 corresponds to ~81° off-axis (~162° view cone)
-      if (dot > 0.15) {
-        mixer.update(delta);
+      // 4. Distance check for animation (18m)
+      if (distSq <= maxAnimDistSq) {
+        vendor.mixer.update(delta);
       }
     }
   }

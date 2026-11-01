@@ -315,7 +315,7 @@ export class AssetCatalog {
               hasLantern: true,
             },
             undefined,
-            true
+            false // Disabled dynamic PointLights for performance
           );
           s.position.set(0, 0, 0);
           return s;

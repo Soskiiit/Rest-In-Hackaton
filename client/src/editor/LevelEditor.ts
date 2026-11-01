@@ -909,6 +909,9 @@ export class LevelEditor {
       rootObject.userData.id = d.id;
       rootObject.userData.chunkId = chunkData.chunk_id;
       rootObject.userData.isSelectable = true;
+      // Distance cull off-screen entities outside the active market/spawn zone (35m)
+      const distFromCenter = Math.hypot(d.worldX - 100.0, d.worldZ - 100.0);
+      rootObject.visible = distFromCenter <= 35.0;
       this.scene.add(rootObject);
 
       const entity: SelectableEntity = {
@@ -926,6 +929,29 @@ export class LevelEditor {
     }
 
     return result;
+  }
+
+  /**
+   * Culls entities farther than maxDist from the active view position (camera in editor, player in game).
+   * Prunes hundreds of unedited/far-off chunk meshes from Three.js render pass in O(N).
+   */
+  public cullDistantEntities(viewX: number, viewZ: number, maxDist: number = 35.0): void {
+    const maxDistSq = maxDist * maxDist;
+    const selected = this.selectionManager.getSelected();
+    for (const entitySet of this.chunkEntities.values()) {
+      for (const entity of entitySet) {
+        if (selected && selected.id === entity.id) {
+          entity.rootObject.visible = true;
+          continue;
+        }
+        const posX = entity.worldPos ? entity.worldPos.x : entity.rootObject.position.x;
+        const posZ = entity.worldPos ? entity.worldPos.z : entity.rootObject.position.z;
+        const dx = posX - viewX;
+        const dz = posZ - viewZ;
+        const distSq = dx * dx + dz * dz;
+        entity.rootObject.visible = distSq <= maxDistSq;
+      }
+    }
   }
 
   /**
