@@ -506,6 +506,19 @@ func (h *Hub) handle(c *client, p Packet) {
 				h.emit(other, "PLAYER_MOVE", map[string]any{"player_id": c.player.ID, "x": c.player.X, "z": c.player.Z, "rotation": c.player.Rotation})
 			}
 		}
+	case "ANIMATION":
+		var v struct {
+			Action string `json:"action"`
+		}
+		if Decode(p.Payload, &v) != nil || len(v.Action) == 0 || len(v.Action) > 32 {
+			h.fail(c, "INVALID_ANIMATION")
+			return
+		}
+		for _, other := range h.clients {
+			if other != c && other.visible[c.player.ID] {
+				h.emit(other, "PLAYER_ANIMATION", map[string]any{"player_id": c.player.ID, "action": v.Action})
+			}
+		}
 	case "CHAT":
 		var v struct {
 			Text string `json:"text"`

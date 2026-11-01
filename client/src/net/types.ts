@@ -6,6 +6,8 @@
 export type PacketType =
   | 'MOVE'
   | 'PLAYER_MOVE'
+  | 'ANIMATION'
+  | 'PLAYER_ANIMATION'
   | 'PLAYER_LEAVE'
   | 'DIALOGUE'
   | 'DIALOGUE_PENDING'
@@ -40,6 +42,15 @@ export interface MovePayload {
   x: number;
   z: number;
   rotation: number; // yaw rotation in radians
+}
+
+export interface AnimationPayload {
+  action: string;
+}
+
+export interface PlayerAnimationPayload {
+  player_id: number;
+  action: string;
 }
 
 export interface DialoguePayload {
@@ -209,6 +220,8 @@ export interface ErrorPayload {
 export interface PacketMap {
   MOVE: MovePayload;
   PLAYER_MOVE: PlayerMovePayload;
+  ANIMATION: AnimationPayload;
+  PLAYER_ANIMATION: PlayerAnimationPayload;
   PLAYER_LEAVE: PlayerLeavePayload;
   DIALOGUE: DialoguePayload;
   NPC_SPEECH: NpcSpeechPayload;

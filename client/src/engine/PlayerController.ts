@@ -67,6 +67,7 @@ export class PlayerController {
   private isInputLocked: boolean = false;
   private unlockCallbacks: Array<() => void> = [];
   private lockCallbacks: Array<() => void> = [];
+  private jumpCallbacks: Array<() => void> = [];
 
   // Perspective mode (First vs Third person)
   private isThirdPerson: boolean = false;
@@ -192,10 +193,27 @@ export class PlayerController {
     return group;
   }
 
+  // Emote broadcast callback
+  private emoteCallbacks: Array<(name: string) => void> = [];
+
+  /**
+   * Registers a callback fired when an emote action is performed.
+   */
+  public onEmote(fn: (name: string) => void): () => void {
+    this.emoteCallbacks.push(fn);
+    return () => {
+      const idx = this.emoteCallbacks.indexOf(fn);
+      if (idx !== -1) this.emoteCallbacks.splice(idx, 1);
+    };
+  }
+
   /**
    * Triggers a one-shot emote animation on local avatar (Wave, Angry, FallBack).
    */
   public playEmote(name: string): boolean {
+    for (const cb of this.emoteCallbacks) {
+      cb(name);
+    }
     if (!this.localTourist) return false;
     this.localTourist.playAction(name);
     return true;
@@ -335,6 +353,17 @@ export class PlayerController {
     return () => {
       const idx = this.lockCallbacks.indexOf(fn);
       if (idx !== -1) this.lockCallbacks.splice(idx, 1);
+    };
+  }
+
+  /**
+   * Registers a callback fired when the player jumps.
+   */
+  public onJump(fn: () => void): () => void {
+    this.jumpCallbacks.push(fn);
+    return () => {
+      const idx = this.jumpCallbacks.indexOf(fn);
+      if (idx !== -1) this.jumpCallbacks.splice(idx, 1);
     };
   }
 
@@ -551,6 +580,9 @@ export class PlayerController {
     if (!this.isInputLocked && this.isGrounded && (this.keys['Space'] || this.keys[' '])) {
       this.verticalVelocity = jumpSpeed;
       this.isGrounded = false;
+      for (const cb of this.jumpCallbacks) {
+        cb();
+      }
     }
 
     if (!this.isGrounded) {
