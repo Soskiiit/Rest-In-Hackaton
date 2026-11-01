@@ -1,7 +1,153 @@
 import * as THREE from 'three';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { ChunkBuilder, StallType } from './ChunkBuilder';
 import { SCENE_COLORS } from './colors';
+
+// ---------------------------------------------------------------------------
+// GLB stall loader — shared cache so each model is fetched only once
+// ---------------------------------------------------------------------------
+
+const stallGltfCache = new Map<string, Promise<import('three/examples/jsm/loaders/GLTFLoader.js').GLTF>>();
+
+const GOODS_POOL = [
+  '/models/market_goods/teapot.glb',
+  '/models/market_goods/cup.glb',
+  '/models/market_goods/bowl.glb',
+  '/models/market_goods/baozi.glb',
+  '/models/market_goods/noodles.glb',
+  '/models/market_goods/rice.glb',
+  '/models/market_goods/apple.glb',
+  '/models/market_goods/banana.glb',
+  '/models/market_goods/bottle.glb',
+  '/models/market_goods/tea.glb',
+];
+
+function populateSlotsWithGoods(slotNodes: THREE.Object3D[], stallX: number, stallZ: number): void {
+  const loader = new GLTFLoader();
+  slotNodes.forEach((slot, idx) => {
+    // Deterministic pseudo-random based on position and slot index
+    const seed = Math.sin(stallX * 17.1 + stallZ * 31.3 + idx * 7.7) * 43758.5453;
+    const rand = seed - Math.floor(seed);
+    if (rand < 0.25) return; // Leave some slots open for realistic spacing
+
+    const goodIdx = Math.floor(rand * GOODS_POOL.length) % GOODS_POOL.length;
+    const goodPath = GOODS_POOL[goodIdx];
+
+    let loadingGood = stallGltfCache.get(goodPath);
+    if (!loadingGood) {
+      loadingGood = loader.loadAsync(goodPath);
+      stallGltfCache.set(goodPath, loadingGood);
+    }
+
+    loadingGood
+      .then((goodGltf) => {
+        const itemMesh = goodGltf.scene.clone(true);
+        itemMesh.traverse((c) => {
+          if ((c as THREE.Mesh).isMesh) {
+            c.castShadow = true;
+            c.receiveShadow = true;
+          }
+        });
+        itemMesh.rotation.y = rand * Math.PI * 2;
+        slot.add(itemMesh);
+      })
+      .catch(() => {});
+  });
+}
+
+/**
+ * Loads a GLB stall model and returns a positioned, rotated group.
+ * A thin invisible collision proxy (isStall=true) is added immediately;
+ * the visual is swapped in once the GLB resolves.
+ *
+ * @param modelPath   Public path e.g. "/models/market/stall_pavilion.glb"
+ * @param stallSize   [sx, sy, sz] footprint in metres
+ * @param x, z        World position
+ * @param rotY        Yaw rotation in radians
+ * @param idleClip    Clip name to loop on load. Defaults to "Idle".
+ */
+function createGlbStall(
+  modelPath: string,
+  stallSize: [number, number, number],
+  x: number,
+  z: number,
+  rotY: number,
+  idleClip = 'Idle',
+): THREE.Group {
+  const [sx, sy, sz] = stallSize;
+  const group = new THREE.Group();
+  group.position.set(x, 0, z);
+  group.rotation.y = rotY;
+  group.userData.isGlbStall = true;
+
+  // Invisible collision/occlusion proxy — available before the GLB loads
+  const proxyGeo = new THREE.BoxGeometry(sx, sy, sz);
+  const proxy = new THREE.Mesh(proxyGeo, new THREE.MeshBasicMaterial({ visible: false }));
+  proxy.position.y = sy / 2;
+  proxy.userData = { isStall: true };
+  proxy.visible = false;
+  group.add(proxy);
+
+  if (typeof window === 'undefined' || typeof fetch !== 'function') {
+    return group;
+  }
+
+  let loading = stallGltfCache.get(modelPath);
+  if (!loading) {
+    loading = new GLTFLoader().loadAsync(modelPath);
+    stallGltfCache.set(modelPath, loading);
+  }
+
+  loading
+    .then((gltf) => {
+      const model = gltf.scene.clone(true);
+      model.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+      group.add(model);
+
+      // Populate 3D goods onto empty slot nodes (Slot_Table_*, Slot_Counter_*, Slot_Shelf_*)
+      const slotNodes: THREE.Object3D[] = [];
+      model.traverse((child) => {
+        if (child.name.startsWith('Slot_')) {
+          slotNodes.push(child);
+        }
+      });
+      if (slotNodes.length > 0) {
+        populateSlotsWithGoods(slotNodes, x, z);
+      }
+
+      // Play Idle (or first available clip)
+      if (gltf.animations.length > 0) {
+        const clip =
+          THREE.AnimationClip.findByName(gltf.animations, idleClip) ??
+          gltf.animations[0];
+        const ticker = model.getObjectByProperty('isMesh', true);
+        if (clip && ticker) {
+          const mixer = new THREE.AnimationMixer(model);
+          mixer.clipAction(clip).play();
+          group.userData.mixer = mixer;
+          group.userData.animations = gltf.animations;
+          let last = performance.now();
+          (ticker as THREE.Mesh).onBeforeRender = () => {
+            const now = performance.now();
+            mixer.update(Math.min((now - last) / 1000, 0.1));
+            last = now;
+          };
+        }
+      }
+    })
+    .catch((err) => {
+      stallGltfCache.delete(modelPath);
+      console.warn(`[MarketLayout] Could not load ${modelPath}:`, err);
+    });
+
+  return group;
+}
 
 export interface LayoutStallItem {
   x: number;
@@ -396,23 +542,25 @@ export class MarketLayout {
       unmerged.add(eave);
     }
 
-    // 2. Build Stalls
+    // 2. Build Stalls — GLB models replacing procedural geometry
+    // Alternate between pavilion and awning variants for visual variety.
+    // Both models carry an Idle clip (pavilion also has Close).
+    const PAVILION_PATH = '/models/market/stall_pavilion.glb';
+    const AWNING_PATH   = '/models/market/stall_awning.glb';
+    // [sx, sy, sz] from manifest.json
+    const PAVILION_SIZE: [number, number, number] = [2.0, 2.91, 1.3];
+    const AWNING_SIZE:   [number, number, number] = [2.0, 2.33, 1.2];
+
     const stalls = this.getStalls();
-    for (const s of stalls) {
-      const stallMesh = ChunkBuilder.buildStall(
-        {
-          x: s.x,
-          z: s.z,
-          rotationY: s.rotY,
-          stallType: s.type ?? 'general',
-          canopyColor: SCENE_COLORS.tentRoofColor,
-          hasLantern: true,
-        },
-        undefined,
-        false
-      );
-      unmerged.add(stallMesh);
-    }
+    stalls.forEach((s, idx) => {
+      // Alternate pavilion / awning so the market has visual rhythm
+      const isAwning = idx % 2 === 1;
+      const path     = isAwning ? AWNING_PATH   : PAVILION_PATH;
+      const size     = isAwning ? AWNING_SIZE   : PAVILION_SIZE;
+
+      const stallGroup = createGlbStall(path, size, s.x, s.z, s.rotY);
+      root.add(stallGroup);
+    });
 
     // 3. Central Lao Wang Pavilion Landmark Stall at pink square in North Plaza (x=100, z=124)
     // Kept as an unmerged standalone object so Lao Wang NPC and teapot interactables remain intact.
@@ -424,7 +572,7 @@ export class MarketLayout {
 
     unmerged.updateMatrixWorld(true);
 
-    // Group meshes by visual material signature
+    // Group wall meshes by visual material signature and merge for performance
     interface Bucket {
       material: THREE.Material;
       geometries: THREE.BufferGeometry[];
@@ -434,8 +582,8 @@ export class MarketLayout {
     const buckets = new Map<string, Bucket>();
 
     unmerged.traverse((child) => {
-      // 1. Create invisible collision proxies for wall and stall base colliders
-      if ((child as any).userData?.isWall || (child as any).userData?.isStall) {
+      // 1. Create invisible collision proxies for wall base colliders
+      if ((child as any).userData?.isWall) {
         const mesh = child as THREE.Mesh;
         const proxy = new THREE.Mesh(mesh.geometry, new THREE.MeshBasicMaterial());
         mesh.matrixWorld.decompose(proxy.position, proxy.quaternion, proxy.scale);
@@ -481,11 +629,17 @@ export class MarketLayout {
       }
     }
 
-    // Freeze local matrices on all static meshes to eliminate scene.updateMatrixWorld CPU overhead
+    // Freeze local matrices on all static wall/eave meshes to eliminate scene.updateMatrixWorld CPU overhead.
+    // NOTE: GLB stall groups are deliberately NOT frozen — their mixers need live matrixAutoUpdate.
     root.traverse((child) => {
+      if (child.userData?.isGlbStall || child.parent?.userData?.isGlbStall) {
+        return;
+      }
       child.matrixAutoUpdate = false;
       child.updateMatrix();
     });
+
+    root.updateMatrixWorld(true);
 
     return root;
   }

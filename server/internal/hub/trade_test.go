@@ -82,11 +82,19 @@ func completeTurn(t *testing.T, h *Hub, c *client, npc string, choice int) {
 		t.Fatalf("dialogue did not start: %+v", packets(c))
 	}
 	h.wg.Wait()
-	select {
-	case e := <-h.events:
-		h.finishDialogue(e.(aiDone))
-	case <-time.After(time.Second):
-		t.Fatal("missing result")
+	var foundDone bool
+	for !foundDone {
+		select {
+		case raw := <-h.events:
+			if e, ok := raw.(aiDone); ok {
+				foundDone = true
+				h.finishDialogue(e)
+			} else if p, ok := raw.(aiPartial); ok {
+				h.partialDialogue(p)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("missing result")
+		}
 	}
 	for _, p := range packets(c) {
 		if p.Type == "ERROR" {

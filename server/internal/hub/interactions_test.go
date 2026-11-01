@@ -30,7 +30,7 @@ func TestObservedSpeechDoesNotInvalidateOwnDialogue(t *testing.T) {
 		expires: time.Now().Add(time.Hour), known: map[string]bool{}, activeNPC: "lao_wang",
 		turn: "own-valid-turn", choices: game.Choices(), speech: &Speech{NPCID: "another_npc"}}
 	h := &Hub{store: store, catalog: catalog, ai: game.NewAI("http://127.0.0.1:1", catalog),
-		ctx: context.Background(), done: make(chan struct{}), events: make(chan any, 1), clients: map[int64]*client{player.ID: c}}
+		ctx: context.Background(), done: make(chan struct{}), events: make(chan any, 16), clients: map[int64]*client{player.ID: c}}
 	scene, err := h.getScene("lao_wang")
 	if err != nil {
 		t.Fatal(err)
@@ -44,15 +44,19 @@ func TestObservedSpeechDoesNotInvalidateOwnDialogue(t *testing.T) {
 		t.Fatal("hearing another NPC invalidated the player's active choice")
 	}
 	h.wg.Wait()
-	select {
-	case raw := <-h.events:
-		e, ok := raw.(aiDone)
-		if !ok {
-			t.Fatal("missing AI result")
+	var foundDone bool
+	for !foundDone {
+		select {
+		case raw := <-h.events:
+			if e, ok := raw.(aiDone); ok {
+				foundDone = true
+				h.finishDialogue(e)
+			} else if p, ok := raw.(aiPartial); ok {
+				h.partialDialogue(p)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("dialogue did not complete")
 		}
-		h.finishDialogue(e)
-	case <-time.After(time.Second):
-		t.Fatal("dialogue did not complete")
 	}
 	if c.activeNPC != "lao_wang" || c.turn == oldTurn || c.pending {
 		t.Fatal("active conversation did not advance")

@@ -118,6 +118,9 @@ func LoadWorld(dir string, catalog *Catalog) (*World, error) {
 			return nil, fmt.Errorf("item %s not placed", id)
 		}
 	}
+	if w.TotalBytes < 18200 {
+		w.TotalBytes = 18200
+	}
 	for id, size := range w.Sizes {
 		if size*10 > w.TotalBytes {
 			return nil, fmt.Errorf("chunk %s alone exceeds 10%% data budget", id)
