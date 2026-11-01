@@ -434,3 +434,48 @@ func TestInspectableItemArrivesInAOI(t *testing.T) {
 		t.Fatalf("discovered item cannot be inspected: %+v %v", quiz, err)
 	}
 }
+func TestPublicPlayerAndWorldEdit(t *testing.T) {
+	f := start(t, testdb.New(t), "http://127.0.0.1:1")
+	a := dial(t, f, account(t, f, "alice", "business"))
+	until(t, a, "WELCOME")
+	b := dial(t, f, account(t, f, "boris", "culture"))
+	until(t, b, "WELCOME")
+	var joined map[string]json.RawMessage
+	json.Unmarshal(until(t, a, "PLAYER_JOIN"), &joined)
+	if string(joined["login"]) != `"boris"` {
+		t.Fatalf("PLAYER_JOIN without login: %v", joined)
+	}
+	if _, leaked := joined["balance"]; leaked {
+		t.Fatal("PLAYER_JOIN leaked another player's balance")
+	}
+	until(t, b, "PLAYER_JOIN")
+	send(t, a, "WORLD_EDIT", map[string]any{"chunk_ids": []string{"5_6", "5_5"}})
+	var edit struct {
+		ChunkIDs []string `json:"chunk_ids"`
+		Login    string   `json:"login"`
+	}
+	json.Unmarshal(until(t, b, "WORLD_EDIT"), &edit)
+	if edit.Login != "alice" || strings.Join(edit.ChunkIDs, ",") != "5_6,5_5" {
+		t.Fatalf("WORLD_EDIT relayed wrong payload: %+v", edit)
+	}
+	for _, bad := range []any{[]string{}, []string{"9_10"}, []string{"../5_6"}, "5_6"} {
+		send(t, a, "WORLD_EDIT", map[string]any{"chunk_ids": bad})
+		// The sender never gets its own WORLD_EDIT back; it only sees the rejection.
+		a.SetReadDeadline(time.Now().Add(4 * time.Second))
+		for {
+			var p hub.Packet
+			if err := a.ReadJSON(&p); err != nil {
+				t.Fatal(err)
+			}
+			if p.Type == "WORLD_EDIT" {
+				t.Fatal("WORLD_EDIT echoed to its sender")
+			}
+			if p.Type == "ERROR" {
+				if !bytes.Contains(p.Payload, []byte("INVALID_WORLD_EDIT")) {
+					t.Fatalf("bad %v: %s", bad, p.Payload)
+				}
+				break
+			}
+		}
+	}
+}

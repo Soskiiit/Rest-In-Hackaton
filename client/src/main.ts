@@ -36,6 +36,7 @@ import {
   PlayerLeavePayload,
   WelcomePayload,
   WordLearnedPayload,
+  WorldEditPayload,
 } from './net/types';
 
 // Network & Transmission Configuration
@@ -161,6 +162,11 @@ class Application {
     // Milestone M5: Reconstruct saved chunk entities on startup
     await this.levelEditor.loadAllStoredChunks().catch((err) => {
       console.warn('[Main] Non-fatal error loading saved chunks:', err);
+    });
+
+    // Shared map: chunks saved to the shared storage are announced to every other player
+    this.levelEditor.onChunksSaved((chunkIds) => {
+      this.wsClient?.send('WORLD_EDIT', { chunk_ids: chunkIds });
     });
 
     console.log('[Main] Initialization complete. Starting render loop.');
@@ -394,10 +400,20 @@ class Application {
         x: payload.x,
         z: payload.z,
         rotation: payload.rotation,
+        login: payload.login,
       });
     });
     client.on('PLAYER_LEAVE', (payload: PlayerLeavePayload) => {
       this.otherPlayerManager.removePlayer(payload.player_id);
+    });
+
+    // 7a. Другой игрок сохранил правки в редакторе уровней: перечитываем эти чанки
+    client.on('WORLD_EDIT', (payload: WorldEditPayload) => {
+      void this.levelEditor.reloadChunks(payload.chunk_ids).then((reloaded) => {
+        if (reloaded > 0) {
+          this.hud.showToast(`${payload.login ?? 'Другой игрок'} изменил карту`);
+        }
+      });
     });
 
     // 8. Сервер закрыл соединение: 1008 = этот аккаунт уже в игре

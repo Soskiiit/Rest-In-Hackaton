@@ -16,6 +16,11 @@ export interface IChunkStorage {
   saveChunk(chunkId: string, data: RawChunkData): Promise<boolean>;
   saveAllDirtyChunks(chunks: Map<string, RawChunkData>): Promise<number>;
   listChunks(): Promise<string[]>;
+  /**
+   * Chunks from the last saveAllDirtyChunks() that other players can read.
+   * Absent: the storage itself is shared, so every saved chunk counts.
+   */
+  readonly lastSharedChunkIds?: string[];
 }
 
 /**
@@ -261,12 +266,14 @@ export class MockChunkStorage implements IChunkStorage {
 
 /**
  * CompositeChunkStorage: Writes to both HTTP and LocalStorage for dual durability.
- * Reading checks LocalStorage first (for instant local overrides) and falls back
- * to HttpChunkStorage (for server disk files).
+ * Reading checks HttpChunkStorage first — the server disk files are the map shared by
+ * every player — and falls back to LocalStorage only when the server is unreachable.
  */
 export class CompositeChunkStorage implements IChunkStorage {
   private readonly httpStorage: IChunkStorage;
   private readonly localStorage: IChunkStorage;
+  /** Chunks from the last saveAllDirtyChunks() that reached the shared HTTP storage. */
+  public lastSharedChunkIds: string[] = [];
 
   constructor(
     httpStorage: IChunkStorage = new HttpChunkStorage(),
@@ -287,17 +294,7 @@ export class CompositeChunkStorage implements IChunkStorage {
   }
 
   public async loadChunk(chunkId: string): Promise<RawChunkData | null> {
-    // 1. Try local storage first
-    try {
-      const localData = await this.localStorage.loadChunk(chunkId);
-      if (localData) {
-        return localData;
-      }
-    } catch (err) {
-      console.warn(`[CompositeChunkStorage] Local read error for ${chunkId}:`, err);
-    }
-
-    // 2. Fall back to HTTP storage
+    // 1. Shared server copy first, so every player sees the latest edits by anyone
     try {
       const httpData = await this.httpStorage.loadChunk(chunkId);
       if (httpData) {
@@ -309,10 +306,26 @@ export class CompositeChunkStorage implements IChunkStorage {
       console.warn(`[CompositeChunkStorage] Http read error for ${chunkId}:`, err);
     }
 
+    // 2. Offline fallback: this browser's last known copy
+    try {
+      const localData = await this.localStorage.loadChunk(chunkId);
+      if (localData) {
+        return localData;
+      }
+    } catch (err) {
+      console.warn(`[CompositeChunkStorage] Local read error for ${chunkId}:`, err);
+    }
+
     return null;
   }
 
   public async saveChunk(chunkId: string, data: RawChunkData): Promise<boolean> {
+    const { localOk, httpOk } = await this.saveToBoth(chunkId, data);
+    // Return true if at least one storage medium succeeded
+    return localOk || httpOk;
+  }
+
+  private async saveToBoth(chunkId: string, data: RawChunkData): Promise<{ localOk: boolean; httpOk: boolean }> {
     const sanitized = sanitizeChunkData(data);
 
     // Save to local storage first
@@ -331,16 +344,18 @@ export class CompositeChunkStorage implements IChunkStorage {
       console.warn(`[CompositeChunkStorage] Http save failed for ${chunkId}:`, err);
     }
 
-    // Return true if at least one storage medium succeeded
-    return localOk || httpOk;
+    return { localOk, httpOk };
   }
 
   public async saveAllDirtyChunks(chunks: Map<string, RawChunkData>): Promise<number> {
     let saved = 0;
+    const shared: string[] = [];
     for (const [chunkId, data] of Array.from(chunks.entries())) {
-      const ok = await this.saveChunk(chunkId, data);
-      if (ok) saved++;
+      const { localOk, httpOk } = await this.saveToBoth(chunkId, data);
+      if (localOk || httpOk) saved++;
+      if (httpOk) shared.push(chunkId);
     }
+    this.lastSharedChunkIds = shared;
     return saved;
   }
 }

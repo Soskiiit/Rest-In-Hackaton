@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 import { OtherPlayerManager } from '../src/engine/OtherPlayerManager';
 
@@ -134,5 +134,56 @@ describe('OtherPlayerManager Unit Test Suite', () => {
 
     expect(manager.getPlayerCount()).toBe(0);
     expect(scene.children.length).toBe(0);
+  });
+});
+
+describe('OtherPlayerManager placeholder avatars and nicknames', () => {
+  let scene: THREE.Scene;
+  let manager: OtherPlayerManager;
+
+  beforeEach(() => {
+    scene = new THREE.Scene();
+    manager = new OtherPlayerManager(scene);
+  });
+
+  it('should build a stick placeholder with a nose instead of a character model', () => {
+    manager.updatePlayer({ player_id: 7, x: 10, z: 10, rotation: 0 });
+    const meshes: THREE.Mesh[] = [];
+    scene.traverse((o) => {
+      if (o instanceof THREE.Mesh) meshes.push(o);
+    });
+    expect(meshes).toHaveLength(2);
+    expect(meshes.every((m) => m.geometry instanceof THREE.BoxGeometry)).toBe(true);
+    const stick = meshes.find((m) => (m.geometry as THREE.BoxGeometry).parameters.height > 1)!;
+    expect((stick.geometry as THREE.BoxGeometry).parameters.height).toBeCloseTo(1.7);
+  });
+
+  it('should show the login from PLAYER_JOIN above the head', () => {
+    manager.updatePlayer({ player_id: 7, x: 10, z: 10, rotation: 0, login: 'boris' });
+    expect(manager.getPlayerName(7)).toBe('boris');
+    const sprite = scene.getObjectByProperty('type', 'Sprite') as THREE.Sprite;
+    expect(sprite.position.y).toBeGreaterThan(1.7);
+    expect(sprite.material.depthTest).toBe(false);
+  });
+
+  it('should fill in the nickname when PLAYER_JOIN arrives after the first PLAYER_MOVE', () => {
+    manager.updatePlayer({ player_id: 7, x: 10, z: 10, rotation: 0 });
+    expect(manager.getPlayerName(7)).toBe('…');
+    manager.updatePlayer({ player_id: 7, x: 10, z: 10, rotation: 0, login: 'alice' });
+    expect(manager.getPlayerName(7)).toBe('alice');
+    manager.setPlayerName(7, 'alice2');
+    expect(manager.getPlayerName(7)).toBe('alice2');
+  });
+
+  it('should keep a player who stands still; only removePlayer (PLAYER_LEAVE) removes them', () => {
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+    manager.updatePlayer({ player_id: 7, x: 10, z: 10, rotation: 0, login: 'boris' });
+    now.mockReturnValue(10 * 60 * 1000);
+    manager.update(0.016);
+    expect(manager.hasPlayer(7)).toBe(true);
+    now.mockRestore();
+    manager.removePlayer(7);
+    expect(manager.hasPlayer(7)).toBe(false);
+    expect(scene.children).toHaveLength(0);
   });
 });

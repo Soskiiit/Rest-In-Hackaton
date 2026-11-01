@@ -20,7 +20,7 @@ describe('Adversarial Test Suite 3: WebGL Resource Allocation, Churn & Disposal'
   });
 
   describe('1. High-Density Player Churn & Memory Allocation', () => {
-    it('should spawn 100 remote players, allocating 400 meshes and 100 name sprites cleanly', () => {
+    it('should spawn 100 remote players, allocating 200 meshes and 100 name sprites cleanly', () => {
       for (let i = 1; i <= 100; i++) {
         manager.updatePlayer({
           player_id: i,
@@ -41,13 +41,13 @@ describe('Adversarial Test Suite 3: WebGL Resource Allocation, Churn & Disposal'
         if (obj instanceof THREE.Sprite) totalSprites++;
       });
 
-      // Each avatar has: torso (cylinder), trim (torus), head (sphere), visor (box) = 4 meshes
-      expect(totalMeshes).toBe(400);
+      // Each placeholder avatar has: stick (box) + nose (box) = 2 meshes
+      expect(totalMeshes).toBe(200);
       // Each avatar has 1 overhead name sprite
       expect(totalSprites).toBe(100);
     });
 
-    it('should completely dispose all 400 geometries and 500 materials upon removing all players', () => {
+    it('should completely dispose all 200 geometries and 300 materials upon removing all players', () => {
       // 1. Spawn 100 players
       for (let i = 1; i <= 100; i++) {
         manager.updatePlayer({
@@ -71,8 +71,8 @@ describe('Adversarial Test Suite 3: WebGL Resource Allocation, Churn & Disposal'
         }
       });
 
-      expect(geometriesToDispose.length).toBe(400);
-      expect(materialsToDispose.length).toBe(500); // 400 mesh materials + 100 sprite materials
+      expect(geometriesToDispose.length).toBe(200);
+      expect(materialsToDispose.length).toBe(300); // 200 mesh materials + 100 sprite materials
 
       // Spy on dispose methods
       const geoSpies = geometriesToDispose.map((g) => vi.spyOn(g, 'dispose'));
@@ -121,6 +121,8 @@ describe('Adversarial Test Suite 3: WebGL Resource Allocation, Churn & Disposal'
                 textBaseline: '',
                 fill: vi.fn(),
                 stroke: vi.fn(),
+                beginPath: vi.fn(),
+                measureText: (text: string) => ({ width: text.length * 24 }),
                 fillText: vi.fn(),
                 roundRect: vi.fn(),
                 rect: vi.fn(),

@@ -349,7 +349,7 @@ func (h *Hub) visibility() {
 			}
 			next[id] = true
 			if !c.visible[id] {
-				h.emit(c, "PLAYER_JOIN", other.player)
+				h.emit(c, "PLAYER_JOIN", publicPlayer(other.player))
 			}
 		}
 		for id := range c.visible {
@@ -359,6 +359,11 @@ func (h *Hub) visibility() {
 		}
 		c.visible = next
 	}
+}
+
+// publicPlayer is what other players may see: the wallet stays private (BALANCE/WELCOME go to the owner only).
+func publicPlayer(p db.Player) map[string]any {
+	return map[string]any{"id": p.ID, "login": p.Login, "profile": p.Profile, "x": p.X, "z": p.Z, "rotation": p.Rotation}
 }
 func (h *Hub) handle(c *client, p Packet) {
 	if !time.Now().Before(c.expires) {
@@ -434,6 +439,26 @@ func (h *Hub) handle(c *client, p Packet) {
 		h.calculator(c, p.Payload)
 	case "INSPECT":
 		h.inspect(c, p.Payload)
+	case "WORLD_EDIT":
+		// The level editor saved these chunk files; tell everyone else to reload them.
+		var v struct {
+			ChunkIDs []string `json:"chunk_ids"`
+		}
+		if Decode(p.Payload, &v) != nil || len(v.ChunkIDs) == 0 || len(v.ChunkIDs) > len(h.world.Chunks) {
+			h.fail(c, "INVALID_WORLD_EDIT")
+			return
+		}
+		for _, id := range v.ChunkIDs {
+			if _, ok := h.world.Chunks[id]; !ok {
+				h.fail(c, "INVALID_WORLD_EDIT")
+				return
+			}
+		}
+		for _, other := range h.clients {
+			if other != c {
+				h.emit(other, "WORLD_EDIT", map[string]any{"chunk_ids": v.ChunkIDs, "player_id": c.player.ID, "login": c.player.Login})
+			}
+		}
 	default:
 		h.fail(c, "UNKNOWN_PACKET")
 	}

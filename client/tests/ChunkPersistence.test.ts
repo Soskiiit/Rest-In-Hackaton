@@ -609,6 +609,48 @@ describe('Milestone M4: Chunk Persistence, Coordinate Transforms & Go Schema', (
         // Verify it was cached to local storage for offline use
         expect(await mockLocal.loadChunk('7_7')).toBeDefined();
       });
+
+      it('should prefer the shared HTTP copy over a stale local copy', async () => {
+        const mockHttp = new MockChunkStorage();
+        const mockLocal = new MockChunkStorage();
+        const composite = new CompositeChunkStorage(mockHttp, mockLocal);
+
+        const stale = createEmptyChunk('3_3');
+        await mockLocal.saveChunk('3_3', stale);
+        const shared = createEmptyChunk('3_3');
+        shared.buildings.push({ type: 'prop_crate', x: 2, z: 2 });
+        await mockHttp.saveChunk('3_3', shared);
+
+        const loaded = await composite.loadChunk('3_3');
+        expect(loaded?.buildings).toHaveLength(1);
+        // The fresh copy replaces the stale cache for offline use
+        expect((await mockLocal.loadChunk('3_3'))?.buildings).toHaveLength(1);
+      });
+
+      it('should fall back to the local copy and report no shared chunks when HTTP is down', async () => {
+        const failingHttp = new MockChunkStorage();
+        failingHttp.loadChunk = async () => {
+          throw new Error('offline');
+        };
+        failingHttp.saveChunk = async () => {
+          throw new Error('offline');
+        };
+        const mockLocal = new MockChunkStorage();
+        const composite = new CompositeChunkStorage(failingHttp, mockLocal);
+
+        await mockLocal.saveChunk('1_1', createEmptyChunk('1_1'));
+        expect((await composite.loadChunk('1_1'))?.chunk_id).toBe('1_1');
+
+        const saved = await composite.saveAllDirtyChunks(new Map([['1_1', createEmptyChunk('1_1')]]));
+        expect(saved).toBe(1);
+        expect(composite.lastSharedChunkIds).toEqual([]);
+      });
+
+      it('should list chunks that reached the shared HTTP storage', async () => {
+        const composite = new CompositeChunkStorage(new MockChunkStorage(), new MockChunkStorage());
+        await composite.saveAllDirtyChunks(new Map([['4_4', createEmptyChunk('4_4')], ['4_5', createEmptyChunk('4_5')]]));
+        expect(composite.lastSharedChunkIds).toEqual(['4_4', '4_5']);
+      });
     });
   });
 

@@ -136,6 +136,7 @@ Ping каждые 20 секунд; клиент должен отвечать Po
 | INSPECT | {item_id,answer_id,quiz_id}; ответить на активный квиз |
 | TRADE_START | {npc_id,item_id}; открыть персональное предложение покупки |
 | CALCULATOR | {npc_id,item_id,trade_id,amount}; подтвердить сумму калькулятора |
+| WORLD_EDIT | {chunk_ids:[...]}; редактор уровней сохранил эти чанки, остальным игрокам нужно их перечитать |
 
 Повторный ответ квиза с использованным quiz_id → STALE_QUIZ.
 Во время AI-запроса следующий DIALOGUE → DIALOGUE_BUSY; движение и чат продолжаются.
@@ -151,7 +152,7 @@ DIALOGUE без choice_id возвращает существующий общи
 | CHUNK_LOAD | {chunk_id,buildings,lanterns,signs,npcs,items} |
 | CHUNK_UNLOAD | {chunk_ids:[...]} |
 | WORLD_STATS | {loaded_chunks,total_chunks,loaded_bytes,total_bytes,data_percent,chunk_percent} |
-| PLAYER_JOIN | {id,login,profile,x,z,rotation,balance} |
+| PLAYER_JOIN | {id,login,profile,x,z,rotation}; без баланса — кошелёк виден только владельцу (WELCOME, BALANCE) |
 | PLAYER_LEAVE | {player_id} |
 | PLAYER_MOVE | {player_id,x,z,rotation} |
 | CHAT | {player_id,login,text} |
@@ -168,13 +169,18 @@ DIALOGUE без choice_id возвращает существующий общи
 | QUIZ | {quiz_id,item_id,audio_text,options:[{id,zh,py,ru}]} |
 | QUIZ_RESULT | {correct,item_id,new?} |
 | WORD_LEARNED | {word_id,zh,py,ru} |
+| WORLD_EDIT | {chunk_ids,player_id,login}; всем, кроме автора правки |
 | ERROR | {code} |
 
 Ошибки: INVALID_MOVE, INVALID_CHAT, CHAT_RATE_LIMIT, RATE_LIMIT, UNKNOWN_PACKET,
 INVALID_DIALOGUE, NPC_OUT_OF_RANGE, DIALOGUE_BUSY, STALE_CHOICE, INVALID_CHOICE,
 INVALID_INSPECT, ITEM_OUT_OF_RANGE, STALE_QUIZ, INVALID_ANSWER, DB_ERROR,
 INVALID_TRADE, INVALID_PRODUCT, DIALOGUE_REQUIRED, NPC_AGGRO, ITEM_ALREADY_OWNED,
-TRADE_EXPIRED, STALE_TRADE, INSUFFICIENT_FUNDS.
+TRADE_EXPIRED, STALE_TRADE, INSUFFICIENT_FUNDS, INVALID_WORLD_EDIT.
+
+WORLD_EDIT принимает от 1 до 100 существующих chunk_id. Сервер только пересылает сигнал:
+сами файлы чанков пишет редактор, а собственную копию мира (NPC и предметы для диалогов, квиза и торга)
+сервер перечитывает при перезапуске.
 При сетевой ошибке или DB_ERROR после подтверждения повторяйте CALCULATOR с тем же trade_id и параметрами:
 квитанция позволяет узнать результат без повторного списания. Для устаревшей/просроченной сделки нужен новый TRADE_START.
 Текст чата и NPC выводите через textContent, без интерпретации HTML.

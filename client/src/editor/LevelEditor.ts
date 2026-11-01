@@ -16,6 +16,7 @@ import {
   EditorSelectionManager,
   SelectableEntity,
   GizmoMode,
+  disposeHierarchy,
 } from './EditorSelectionManager';
 import { AssetCatalog } from './AssetCatalog';
 import { AssetCatalogUI } from './AssetCatalogUI';
@@ -85,6 +86,9 @@ export class LevelEditor {
   private saveAgainAfterCurrent: boolean = false;
   private changeVersion: number = 0;
   private readonly AUTO_SAVE_DELAY_MS: number = 1200;
+
+  // Shared map: notified with the chunk ids other players can now read
+  private readonly chunksSavedListeners: Set<(chunkIds: string[]) => void> = new Set();
 
   // Top Toolbar / HUD UI References
   private modeToggleBtn: HTMLElement | null = null;
@@ -819,6 +823,21 @@ export class LevelEditor {
 
       const savedCount = await this.storage.saveAllDirtyChunks(dirtyMap);
 
+      // Announce what other players can read; a local-only save stays invisible to them.
+      const sharedIds = this.storage.lastSharedChunkIds ?? (savedCount > 0 ? savedIds : []);
+      if (sharedIds.length > 0) {
+        for (const listener of this.chunksSavedListeners) {
+          try {
+            listener([...sharedIds]);
+          } catch (err) {
+            console.error('[LevelEditor] Error in chunksSaved listener:', err);
+          }
+        }
+      }
+      if (sharedIds.length < savedIds.length) {
+        this.showToast('⚠️ Часть правок сохранена только в этом браузере — другие игроки их не увидят', 5000);
+      }
+
       // Only clear the chunks if nothing changed during the async write.
       // Otherwise keep them dirty so the follow-up autosave persists the new state.
       if (this.changeVersion === versionAtStart) {
@@ -849,6 +868,47 @@ export class LevelEditor {
    */
   public async save(): Promise<number> {
     return this.saveAllDirtyChunks();
+  }
+
+  /**
+   * Subscribes to saves that reached the shared storage; the listener receives the chunk ids.
+   */
+  public onChunksSaved(listener: (chunkIds: string[]) => void): () => void {
+    this.chunksSavedListeners.add(listener);
+    return () => {
+      this.chunksSavedListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Replaces the objects of the given chunks with their stored version (another player edited them).
+   * A chunk with unsaved local edits is kept as is. Returns the number of chunks reloaded.
+   */
+  public async reloadChunks(chunkIds: string[]): Promise<number> {
+    let reloaded = 0;
+    for (const chunkId of chunkIds) {
+      if (this.dirtyChunks.has(chunkId)) {
+        this.showToast(`⚠️ Чанк ${chunkId} изменил другой игрок, но у вас есть несохранённые правки — оставлены ваши`, 5000);
+        continue;
+      }
+      const chunkData = await this.storage.loadChunk(chunkId);
+      if (this.dirtyChunks.has(chunkId)) {
+        continue; // edited locally while loading
+      }
+      for (const entity of this.getEntitiesByChunk(chunkId)) {
+        if (this.selectionManager.getSelected() === entity) {
+          this.select(null);
+        }
+        this.unregisterEntity(entity);
+        entity.rootObject.removeFromParent();
+        disposeHierarchy(entity.rootObject);
+      }
+      if (chunkData) {
+        this.reconstructEntitiesFromChunk(chunkData);
+      }
+      reloaded++;
+    }
+    return reloaded;
   }
 
   /**
