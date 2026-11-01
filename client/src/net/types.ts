@@ -40,7 +40,10 @@ export interface MovePayload {
 
 export interface DialoguePayload {
   npc_id: string;
-  choice_id: number;
+  // Omitted when starting/reopening a dialogue: the server then generates or
+  // resends the current turn. Must be paired with turn_id when choosing.
+  choice_id?: number;
+  turn_id?: string;
 }
 
 export interface InspectPayload {
@@ -77,10 +80,15 @@ export interface Token {
 
 export interface Choice {
   id: number;
-  text_zh: string;
-  text_ru: string;
+  // Server shape (see server/internal/game Choice).
+  zh?: string;
+  py?: string;
+  ru?: string;
+  // Legacy/mock shape kept for MockServer and fixtures.
+  text_zh?: string;
+  text_ru?: string;
   text_py?: string;
-  type?: 'polite' | 'haggle' | 'provoke' | 'leave';
+  type?: 'polite' | 'haggle' | 'provoke' | 'leave' | 'bluff' | 'order' | 'documents' | 'bribe' | 'directions';
 }
 
 export interface NpcSpeechPayload {
@@ -91,6 +99,8 @@ export interface NpcSpeechPayload {
   mianzi: number;  // Respect meter: 0..100
   aggro: number;   // Aggro / Rage meter: 0..100
   price?: number;
+  audio_base64?: string; // Base64-encoded WAV audio from AI TTS
+  turn_id?: string;      // Turn token for STALE_CHOICE guard
 }
 
 export interface NpcStatePayload {

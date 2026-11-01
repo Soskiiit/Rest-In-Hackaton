@@ -72,6 +72,7 @@ type Speech struct {
 	Fallback     bool          `json:"fallback"`
 	Offers       []string      `json:"offers"`
 	SceneVersion int64         `json:"scene_version"`
+	AudioBase64  string        `json:"audio_base64,omitempty"`
 }
 type join struct {
 	accepted chan struct{}

@@ -1,0 +1,67 @@
+name: rest-in-hackaton
+
+services:
+  db:
+    image: postgres:18.6
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python3 server/scripts/setup_env.py}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run python3 server/scripts/setup_env.py}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./server/docker/init-db.sh:/docker-entrypoint-initdb.d/10-project.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  ai:
+    build:
+      context: ./ai
+      dockerfile: Dockerfile
+    environment:
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      TTS_ENGINE: ${TTS_ENGINE:-formant}
+    ports:
+      - "127.0.0.1:8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  server:
+    build:
+      context: ./server
+      dockerfile: docker/Dockerfile
+    environment:
+      SERVER_ADDR: ":3000"
+      DATABASE_URL: postgres://hackaton:${APP_DB_PASSWORD}@db:5432/hackaton?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?Run python3 server/scripts/setup_env.py}
+      WORLD_DIR: world/chunks
+      CATALOG_PATH: world/catalog.json
+      AI_URL: http://ai:8000
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      ai:
+        condition: service_started
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -16,6 +16,9 @@ export interface PlayerControllerConfig {
   playerRadius: number;
   damping: number; // friction/damping factor
   spawnPosition: { x: number; y: number; z: number };
+  spawnYaw?: number; // initial yaw rotation in radians
+  jumpSpeed?: number;
+  gravity?: number;
 }
 
 export const DEFAULT_PLAYER_CONFIG: PlayerControllerConfig = {
@@ -31,6 +34,9 @@ export const DEFAULT_PLAYER_CONFIG: PlayerControllerConfig = {
   playerRadius: 0.5,
   damping: 12.0,
   spawnPosition: { x: 100, y: 0, z: 66 },
+  spawnYaw: 0, // Faces North into the market corridor (+Z towards crossroads and plazas)
+  jumpSpeed: 7.5,
+  gravity: 20.0,
 };
 
 /**
@@ -46,6 +52,8 @@ export class PlayerController {
   public readonly position: THREE.Vector3;
   private readonly velocity: THREE.Vector3 = new THREE.Vector3();
   private readonly euler: THREE.Euler = new THREE.Euler(0, 0, 0, 'YXZ');
+  private isGrounded: boolean = true;
+  private verticalVelocity: number = 0;
 
   // Input states
   private keys: Record<string, boolean> = {};
@@ -77,9 +85,10 @@ export class PlayerController {
       this.config.spawnPosition.z
     );
 
-    // Initial camera position & orientation
+    // Initial camera position & orientation (spawnYaw allows 180 deg turnaround)
     this.camera.position.set(this.position.x, this.position.y + this.config.eyeHeight, this.position.z);
-    this.euler.setFromQuaternion(this.camera.quaternion);
+    this.euler.set(0, this.config.spawnYaw ?? 0, 0, 'YXZ');
+    this.camera.quaternion.setFromEuler(this.euler);
 
     // Bind event listeners
     this.bindEvents();
@@ -151,10 +160,47 @@ export class PlayerController {
     window.addEventListener('keyup', this.onKeyUp);
   }
 
-  private onClick = (): void => {
-    if (!this.isInputLocked && !this.isPointerLocked) {
-      this.domElement.requestPointerLock();
+  private isMenuOrModalOpen(): boolean {
+    if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return false;
+    const authEl = document.getElementById('auth-overlay');
+    if (authEl && !authEl.classList?.contains('hidden')) return true;
+
+    const dialogueEl = document.getElementById('dialogue-overlay');
+    if (dialogueEl && !dialogueEl.classList?.contains('hidden')) return true;
+
+    const quizEl = document.getElementById('quiz-overlay');
+    if (quizEl && !quizEl.classList?.contains('hidden')) return true;
+
+    return false;
+  }
+
+  private onClick = (event?: MouseEvent | any): void => {
+    if (this.isInputLocked || this.isPointerLocked) return;
+
+    if (event?.target && typeof event.target.closest === 'function') {
+      const target = event.target as HTMLElement;
+      if (
+        target.closest('#auth-overlay') ||
+        target.closest('.auth-overlay') ||
+        target.closest('#dialogue-overlay') ||
+        target.closest('.dialogue-overlay') ||
+        target.closest('#quiz-overlay') ||
+        target.closest('.quiz-overlay') ||
+        target.closest('#logout-btn') ||
+        target.closest('button') ||
+        target.closest('input') ||
+        target.closest('textarea') ||
+        target.closest('select') ||
+        target.closest('a') ||
+        target.closest('label')
+      ) {
+        return;
+      }
     }
+
+    if (this.isMenuOrModalOpen()) return;
+
+    this.domElement.requestPointerLock();
   };
 
   private onPointerLockChange = (): void => {
@@ -187,6 +233,13 @@ export class PlayerController {
   private onKeyDown = (event: KeyboardEvent): void => {
     if (this.isInputLocked) return;
     this.keys[event.code] = true;
+    if (event.code === 'Space' || event.key === ' ') {
+      this.keys['Space'] = true;
+      this.keys[' '] = true;
+      if (this.isPointerLocked) {
+        event.preventDefault();
+      }
+    }
 
     // Toggle perspective with 'KeyV'
     if (event.code === 'KeyV') {
@@ -196,6 +249,10 @@ export class PlayerController {
 
   private onKeyUp = (event: KeyboardEvent): void => {
     this.keys[event.code] = false;
+    if (event.code === 'Space' || event.key === ' ') {
+      this.keys['Space'] = false;
+      this.keys[' '] = false;
+    }
   };
 
   /**
@@ -256,7 +313,7 @@ export class PlayerController {
    * Requests browser pointer lock on the controller's DOM element.
    */
   public requestPointerLock(): void {
-    if (!this.isInputLocked) {
+    if (!this.isInputLocked && !this.isMenuOrModalOpen()) {
       this.domElement.requestPointerLock();
     }
   }
@@ -400,6 +457,27 @@ export class PlayerController {
       this.position.z = nextZ;
     } else {
       this.velocity.z = 0;
+    }
+
+    // 5.1 Vertical movement & Jumping (Spacebar)
+    const jumpSpeed = this.config.jumpSpeed ?? 7.5;
+    const gravity = this.config.gravity ?? 20.0;
+
+    if (!this.isInputLocked && this.isGrounded && (this.keys['Space'] || this.keys[' '])) {
+      this.verticalVelocity = jumpSpeed;
+      this.isGrounded = false;
+    }
+
+    if (!this.isGrounded) {
+      this.verticalVelocity -= gravity * delta;
+      this.position.y += this.verticalVelocity * delta;
+
+      // Floor ground collision (ground level = 0)
+      if (this.position.y <= 0) {
+        this.position.y = 0;
+        this.verticalVelocity = 0;
+        this.isGrounded = true;
+      }
     }
 
     // 6. Update camera & avatar positions

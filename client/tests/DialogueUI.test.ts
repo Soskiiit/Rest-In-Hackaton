@@ -5,7 +5,7 @@
  * Verifies:
  * 1. DialogueUI Component Unit Tests (subtitles, masking, gauges, choices, keyboard, cleanup)
  * 2. Network Integration Tests (NPC_SPEECH, DIALOGUE, NPC_STATE, MockServer, modal locking)
- * 3. Proximity Detection Tests (distance to (110.0, 0, 109.5), [F] prompt visibility, boundary checks, key F)
+ * 3. Proximity Detection Tests (distance to the central pavilion (100.0, 0, 124.0), [F] prompt visibility, boundary checks, key F)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -339,7 +339,7 @@ export function createDialogueDomFixture(): DialogueDomFixture {
 // Proximity Logic Helper
 // ============================================================================
 
-export const LAO_WANG_LANDMARK_POS = { x: 110.0, y: 0.0, z: 109.5 };
+export const LAO_WANG_LANDMARK_POS = { x: 100.0, y: 0.0, z: 124.0 };
 export const NPC_INTERACTION_RADIUS = 3.5;
 
 export function checkNpcProximity(
@@ -530,6 +530,25 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
 
       expect(buttons[3].textContent).toContain('[4]');
       expect(buttons[3].textContent).toContain('对不起，再看看。');
+    });
+
+    it('1.10b should render choices in the real server shape ({zh,py,ru})', () => {
+      const dialogue = new DialogueUI(fixture.doc as any);
+      dialogue.open({
+        ...MOCK_SPEECH_GREETING,
+        choices: [
+          { id: 1, zh: '谢谢老板！', py: 'Xièxie lǎobǎn!', ru: 'Спасибо, босс!', type: 'polite' },
+          { id: 4, zh: '我再看看', py: 'Wǒ zài kànkan', ru: 'Я еще посмотрю', type: 'leave' },
+        ],
+      });
+
+      const buttons = fixture.choices.children;
+      expect(buttons).toHaveLength(2);
+      expect(buttons[0].textContent).toContain('[1]');
+      expect(buttons[0].textContent).toContain('谢谢老板！');
+      expect(buttons[0].textContent).toContain('Спасибо, босс!');
+      expect(buttons[1].textContent).toContain('我再看看');
+      expect(buttons[1].textContent).toContain('Я еще посмотрю');
     });
 
     it('1.11 should invoke onChoice callback when a choice button is clicked', () => {
@@ -738,23 +757,23 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
   // Suite 3: Proximity Detection & Interaction Trigger
   // --------------------------------------------------------------------------
   describe('3. Proximity Detection & Interaction Trigger', () => {
-    it('3.1 should confirm Lao Wang coordinates at (110.0, 0, 109.5) and 3.5m radius', () => {
-      expect(LAO_WANG_LANDMARK_POS).toEqual({ x: 110.0, y: 0.0, z: 109.5 });
+    it('3.1 should confirm Lao Wang coordinates at the central pavilion (100, 124) and 3.5m radius', () => {
+      expect(LAO_WANG_LANDMARK_POS).toEqual({ x: 100.0, y: 0.0, z: 124.0 });
       expect(NPC_INTERACTION_RADIUS).toBe(3.5);
-      expect(LAO_WANG_CONFIG.worldPosition).toEqual({ x: 110.0, y: 0.0, z: 109.5 });
+      expect(LAO_WANG_CONFIG.worldPosition).toEqual({ x: 100.0, y: 0.0, z: 124.0 });
       expect(LAO_WANG_CONFIG.interactionRadius).toBe(3.5);
     });
 
     it('3.2 should detect player in range and reveal interaction prompt within 3.5m', () => {
-      const res1 = checkNpcProximity(110.0, 110.0);
+      const res1 = checkNpcProximity(100.0, 124.0);
       expect(res1.inRange).toBe(true);
-      expect(res1.distance).toBeCloseTo(0.5, 4);
+      expect(res1.distance).toBeCloseTo(0, 4);
 
-      const res2 = checkNpcProximity(110.0, 112.5);
+      const res2 = checkNpcProximity(100.0, 127.0);
       expect(res2.inRange).toBe(true);
       expect(res2.distance).toBeCloseTo(3.0, 4);
 
-      const res3 = checkNpcProximity(112.0, 111.5);
+      const res3 = checkNpcProximity(102.0, 125.5);
       expect(res3.inRange).toBe(true);
       expect(res3.distance).toBeLessThan(3.5);
 
@@ -769,7 +788,7 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
       expect(resSpawn.inRange).toBe(false);
       expect(resSpawn.distance).toBeGreaterThan(13.0);
 
-      const resFar = checkNpcProximity(110.0, 114.0);
+      const resFar = checkNpcProximity(100.0, 128.5);
       expect(resFar.inRange).toBe(false);
       expect(resFar.distance).toBeCloseTo(4.5, 4);
 
@@ -778,11 +797,11 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
     });
 
     it('3.4 should enforce boundary precision strictly at 3.500m vs 3.501m', () => {
-      const boundaryIn = checkNpcProximity(110.0, 113.0);
+      const boundaryIn = checkNpcProximity(100.0, 127.5);
       expect(boundaryIn.inRange).toBe(true);
       expect(boundaryIn.distance).toBeCloseTo(3.5, 6);
 
-      const boundaryOut = checkNpcProximity(110.0, 113.001);
+      const boundaryOut = checkNpcProximity(100.0, 127.501);
       expect(boundaryOut.inRange).toBe(false);
       expect(boundaryOut.distance).toBeGreaterThan(3.5);
     });
@@ -791,7 +810,7 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
       const dialogue = new DialogueUI(fixture.doc as any);
       let dialogueTriggered = false;
 
-      const playerPos = { x: 110.0, z: 111.0 };
+      const playerPos = { x: 100.0, z: 125.0 };
 
       const handleKey = (key: string) => {
         if ((key === 'f' || key === 'F') && !dialogue.isOpen()) {
@@ -835,7 +854,7 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
       const dialogue = new DialogueUI(fixture.doc as any);
       dialogue.open(MOCK_SPEECH_GREETING);
 
-      const playerPos = { x: 110.0, z: 110.0 };
+      const playerPos = { x: 100.0, z: 124.0 };
       const prox = checkNpcProximity(playerPos.x, playerPos.z);
 
       const shouldShowPrompt = prox.inRange && !dialogue.isOpen();

@@ -135,6 +135,13 @@ export class DialogueUI implements IDialogueUI {
     this.lineOriginalEl = getEl('dialogue-line-original');
     this.lineTranslatedEl = getEl('dialogue-line-translated');
     this.choicesContainerEl = getEl('dialogue-choices');
+
+    const closeBtn = getEl('dialogue-close-btn');
+    if (closeBtn && typeof closeBtn.addEventListener === 'function') {
+      closeBtn.addEventListener('click', () => {
+        this.close();
+      });
+    }
   }
 
   /**
@@ -358,17 +365,25 @@ export class DialogueUI implements IDialogueUI {
       const textSpan = doc.createElement('span');
       textSpan.className = 'choice-text';
 
-      if (choice.text_ru && choice.text_zh) {
-        textSpan.textContent = `${choice.text_zh} (${choice.text_ru})`;
+      // Server sends {zh,py,ru}; MockServer/fixtures use {text_zh,text_ru}.
+      const zh = choice.zh ?? choice.text_zh ?? '';
+      const ru = choice.ru ?? choice.text_ru ?? '';
+
+      if (zh && ru) {
+        textSpan.textContent = `${zh} (${ru})`;
       } else {
-        textSpan.textContent = choice.text_zh || choice.text_ru || '';
+        textSpan.textContent = zh || ru;
       }
 
       btn.appendChild(numBadge);
       btn.appendChild(textSpan);
 
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e: MouseEvent | any) => {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         this.selectChoice(choice.id);
+      });
+      btn.addEventListener('pointerdown', (e: PointerEvent | any) => {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
       });
 
       this.choicesContainerEl!.appendChild(btn);
@@ -400,13 +415,17 @@ export class DialogueUI implements IDialogueUI {
 
     let choiceIndex = -1;
 
-    if (e.key >= '1' && e.key <= '4') {
-      choiceIndex = parseInt(e.key, 10) - 1;
-    } else if (typeof e.code === 'string' && e.code.startsWith('Digit')) {
-      const digit = parseInt(e.code.replace('Digit', ''), 10);
+    // Support standard numbers, Numpad, and Top Row Digits
+    const key = e.key;
+    const code = e.code || '';
+
+    if (key >= '1' && key <= '4') {
+      choiceIndex = parseInt(key, 10) - 1;
+    } else if (code.startsWith('Digit')) {
+      const digit = parseInt(code.replace('Digit', ''), 10);
       if (digit >= 1 && digit <= 4) choiceIndex = digit - 1;
-    } else if (typeof e.code === 'string' && e.code.startsWith('Numpad')) {
-      const digit = parseInt(e.code.replace('Numpad', ''), 10);
+    } else if (code.startsWith('Numpad')) {
+      const digit = parseInt(code.replace('Numpad', ''), 10);
       if (digit >= 1 && digit <= 4) choiceIndex = digit - 1;
     }
 
@@ -414,6 +433,7 @@ export class DialogueUI implements IDialogueUI {
       const choice = this.currentSpeech.choices[choiceIndex];
       if (choice) {
         if (typeof e.preventDefault === 'function') e.preventDefault();
+        if (typeof e.stopPropagation === 'function') e.stopPropagation();
         this.selectChoice(choice.id);
       }
     }

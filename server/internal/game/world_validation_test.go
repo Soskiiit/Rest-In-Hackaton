@@ -13,8 +13,8 @@ func TestWorldExposesItemsAndValidatesPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items := world.Chunks["5_5"].Items
-	if len(items) != 2 || items[0].ID != "teapot" || items[0].X != 12 || items[0].Z != 10 {
+	items := world.Chunks["5_6"].Items
+	if len(items) != 2 || items[0].ID != "teapot" || items[0].X != 1 || items[0].Z != 4 {
 		t.Fatalf("client cannot discover the inspectable item: %+v", items)
 	}
 	dir := t.TempDir()
@@ -31,7 +31,7 @@ func TestWorldExposesItemsAndValidatesPlacement(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	original := world.Chunks["5_5"]
+	original := world.Chunks["5_6"]
 	for _, mode := range []string{"missing", "unknown", "position", "duplicate"} {
 		t.Run(mode, func(t *testing.T) {
 			chunk := original
@@ -50,7 +50,7 @@ func TestWorldExposesItemsAndValidatesPlacement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = os.WriteFile(filepath.Join(dir, "5_5.json"), data, 0600); err != nil {
+			if err = os.WriteFile(filepath.Join(dir, "5_6.json"), data, 0600); err != nil {
 				t.Fatal(err)
 			}
 			if _, err = LoadWorld(dir, catalog); err == nil {

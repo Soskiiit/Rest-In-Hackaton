@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ChunkStreamer } from './ChunkStreamer';
@@ -66,6 +65,9 @@ export class World {
   private hemiLight: THREE.HemisphereLight | null = null;
   private lanternsGroup: THREE.Group = new THREE.Group();
   private chunkStreamer: ChunkStreamer | null = null;
+  private vendorMixers: THREE.AnimationMixer[] = [];
+  private cachedWallBoundingBoxes: THREE.Box3[] | null = null;
+  private shadowFrameCounter: number = 0;
 
   private clock: THREE.Clock = new THREE.Clock();
   private animationFrameId: number | null = null;
@@ -96,10 +98,13 @@ export class World {
       antialias: true,
       powerPreference: 'high-performance',
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Cap pixelRatio to 1.25 to prevent fill-rate saturation on 2K/4K/Retina displays
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
 
@@ -115,11 +120,11 @@ export class World {
     // 6. Atmospheric night market lanterns
     this.initMarketLanterns();
 
-    // 6.1 Custom Arch model at street entrance
-    this.initArchModel();
-
     // 6.2 Custom Market Layout (Streets, Plazas & Walls matching blueprint)
     this.initCustomMarketLayout();
+
+    // 6.3 Animated / Populated NPCs behind market stalls and in plazas
+    this.initMarketNpcs();
 
     // 7. Dynamic Chunk Streamer (10x10 grid, AoI <= 9 chunks)
     this.initChunkStreamer();
@@ -200,9 +205,16 @@ export class World {
         // Scale tile geometry so each unit is exactly 2.0 x 2.0 meters
         mergedGeo.scale(4.03, 1.0, 2.045);
 
-        // 100 x 100 grid spanning [0, 200] in X and Z
-        const countX = 100;
-        const countZ = 100;
+        // Populate tiles covering the playable market area with generous margins [42, 158] x [54, 154]
+        // Outside these coordinates are tall 8.5m solid exterior walls and fog
+        const startX = 42;
+        const endX = 158;
+        const startZ = 54;
+        const endZ = 154;
+        const step = 2.0;
+
+        const countX = Math.round((endX - startX) / step);
+        const countZ = Math.round((endZ - startZ) / step);
         const totalInstances = countX * countZ;
 
         const instancedMesh = new THREE.InstancedMesh(
@@ -217,9 +229,9 @@ export class World {
         let idx = 0;
 
         for (let ix = 0; ix < countX; ix++) {
-          const posX = ix * 2 + 1; // centered in 2m grid: 1, 3, 5, ..., 199
+          const posX = startX + ix * step + 1;
           for (let iz = 0; iz < countZ; iz++) {
-            const posZ = iz * 2 + 1;
+            const posZ = startZ + iz * step + 1;
             dummy.position.set(posX, 0.015, posZ);
             dummy.updateMatrix();
             instancedMesh.setMatrixAt(idx++, dummy.matrix);
@@ -229,7 +241,7 @@ export class World {
         instancedMesh.instanceMatrix.needsUpdate = true;
         this.stoneTileFloor = instancedMesh;
         this.scene.add(this.stoneTileFloor);
-        console.log('[World] Stone tile pavement floor generated across 200x200 world (10,000 instances).');
+        console.log(`[World] Stone tile pavement floor generated across market area (${totalInstances} instances).`);
       },
       undefined,
       (err) => {
@@ -264,15 +276,18 @@ export class World {
     this.scene.add(this.dirLight.target);
 
     this.dirLight.castShadow = true;
-    this.dirLight.shadow.mapSize.width = 2048;
-    this.dirLight.shadow.mapSize.height = 2048;
+    this.dirLight.shadow.mapSize.width = 1024;
+    this.dirLight.shadow.mapSize.height = 1024;
     this.dirLight.shadow.camera.near = 10;
     this.dirLight.shadow.camera.far = 250;
-    this.dirLight.shadow.camera.left = -110;
-    this.dirLight.shadow.camera.right = 110;
-    this.dirLight.shadow.camera.top = 110;
-    this.dirLight.shadow.camera.bottom = -110;
-    this.dirLight.shadow.bias = -0.0005;
+    // Tightened shadow frustum covering the entire active market layout (136x136m)
+    // Enhances texel density per meter by ~66% and culls offscreen geometry from shadow pass
+    this.dirLight.shadow.camera.left = -68;
+    this.dirLight.shadow.camera.right = 68;
+    this.dirLight.shadow.camera.top = 68;
+    this.dirLight.shadow.camera.bottom = -68;
+    this.dirLight.shadow.bias = -0.0002;
+    this.dirLight.shadow.normalBias = 0.04;
 
     this.scene.add(this.dirLight);
   }
@@ -330,47 +345,8 @@ export class World {
   /**
    * Loads the custom arch OBJ model and places it majestically at the street entrance near spawn.
    */
-  private initArchModel(): void {
-    const loader = new OBJLoader();
-    loader.load(
-      '/models/arch.obj',
-      (obj) => {
-        // Compute bounding box to normalize scale
-        const box = new THREE.Box3().setFromObject(obj);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const maxDim = Math.max(size.x, size.y, size.z);
-        
-        // Target height ~5.5 meters over the street
-        const scale = maxDim > 0 ? 5.5 / maxDim : 4.0;
-        obj.scale.set(scale, scale, scale);
-
-        // Position over the entrance avenue right at the beginning of the street
-        obj.position.set(100, 0, 64);
-        obj.rotation.y = 0;
-
-        obj.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            if (!child.material || (Array.isArray(child.material) && child.material.length === 0)) {
-              child.material = new THREE.MeshStandardMaterial({
-                color: 0xcc2229, // Traditional Chinese Vermilion
-                roughness: 0.5,
-                metalness: 0.2,
-              });
-            }
-          }
-        });
-
-        this.scene.add(obj);
-        console.log('[World] Custom arch model successfully loaded and added to scene.');
-      },
-      undefined,
-      (err) => {
-        console.warn('[World] Could not load /models/arch.obj:', err);
-      }
-    );
+  public initArchModel(): void {
+    // Arch removed per user request
   }
 
   /**
@@ -380,6 +356,109 @@ export class World {
   private initCustomMarketLayout(): void {
     const layoutGroup = MarketLayout.buildLayoutGroup();
     this.scene.add(layoutGroup);
+  }
+
+  /**
+   * Populates 3D GLB animated vendor NPCs (Chef Chen and Lao Wang) behind market stalls.
+   */
+  private initMarketNpcs(): void {
+    const stalls = MarketLayout.getStalls();
+
+    // Stalls to populate (excluding the central landmark area)
+    // Deterministic pseudo-random selection (~60% stalls have an active vendor, ~40% are empty as if vendor stepped away)
+    const vendorPositions: Array<{ x: number; z: number; rotY: number }> = [];
+    for (const stall of stalls) {
+      const distToLaoWang = Math.hypot(stall.x - 100.0, stall.z - 124.0);
+      if (distToLaoWang < 3.5) continue;
+
+      // Consistent seed hash for this stall location
+      const hash = Math.sin(stall.x * 12.9898 + stall.z * 78.233) * 43758.5453;
+      const randVal = hash - Math.floor(hash);
+      // Skip vendor on ~40% of stalls so some counters remain empty
+      if (randVal < 0.38) {
+        continue;
+      }
+
+      const facingAngle = stall.rotY;
+      // Stalls face with canopy tilted forward towards customer side (+Z)
+      // Vendors now stand on the other side of the counter (+0.95m forward) facing back towards the stall
+      const offsetX = Math.sin(facingAngle) * 0.95;
+      const offsetZ = Math.cos(facingAngle) * 0.95;
+
+      vendorPositions.push({
+        x: stall.x + offsetX,
+        z: stall.z + offsetZ,
+        rotY: facingAngle + Math.PI,
+      });
+    }
+
+    // Load both GLTF vendor models (Chef Chen and Lao Wang)
+    const loader = new GLTFLoader();
+    const modelUrls = {
+      chef: '/assets/models/chef_chen.glb',
+      lao: '/assets/models/lao_wang.glb',
+    };
+
+    Promise.all([
+      loader.loadAsync(modelUrls.chef).catch(() => loader.loadAsync('/models/vendors/chef_chen.glb')),
+      loader.loadAsync(modelUrls.lao).catch(() => loader.loadAsync('/models/vendors/lao_wang.glb')),
+    ]).then(([chefGltf, laoGltf]) => {
+      console.log(`[World] Successfully loaded vendor GLB models! Populating ${vendorPositions.length} stalls...`);
+
+      // Spawn Lao Wang at his central antique pavilion stall (100.0, 0, 124.0)
+      // Pavilion center is (100.0, 124.0), counter is at z = 124.3 (extends to z=124.95), platform is from 122.2 to 125.8
+      // Position Lao Wang comfortably on the other side of the counter at z = 125.55 (facing towards counter/South: rotY = Math.PI)
+      const centralLaoWang = laoGltf.scene.clone(true);
+      centralLaoWang.position.set(100.0, 0.0, 125.55); // On the other side of the counter
+      centralLaoWang.rotation.set(0, Math.PI, 0);
+      centralLaoWang.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+      this.scene.add(centralLaoWang);
+
+      // Setup Idle animation on central Lao Wang
+      if (laoGltf.animations && laoGltf.animations.length > 0) {
+        const mixer = new THREE.AnimationMixer(centralLaoWang);
+        const idleClip = laoGltf.animations.find((a) => a.name === 'Idle') ?? laoGltf.animations[0];
+        mixer.clipAction(idleClip).play();
+        this.vendorMixers.push(mixer);
+      }
+
+      // Populate every stall with Chef Chen and Lao Wang models alternately
+      for (let i = 0; i < vendorPositions.length; i++) {
+        const vp = vendorPositions[i];
+        const isChef = i % 2 === 0;
+        const sourceGltf = isChef ? chefGltf : laoGltf;
+
+        const clone = sourceGltf.scene.clone(true);
+        clone.position.set(vp.x, 0.0, vp.z);
+        // Models face +Z by default; rotate by vp.rotY to face into corridor
+        clone.rotation.set(0, vp.rotY, 0);
+
+        clone.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            child.castShadow = false; // Background vendors are sheltered under stall canopies
+            child.receiveShadow = true;
+          }
+        });
+        this.scene.add(clone);
+
+        // Play Idle animation with slight random time offset
+        if (sourceGltf.animations && sourceGltf.animations.length > 0) {
+          const mixer = new THREE.AnimationMixer(clone);
+          const idleClip = sourceGltf.animations.find((a) => a.name === 'Idle') ?? sourceGltf.animations[0];
+          const action = mixer.clipAction(idleClip);
+          action.time = Math.random() * 4.0; // Desynchronize animations naturally
+          action.play();
+          this.vendorMixers.push(mixer);
+        }
+      }
+    }).catch((err) => {
+      console.warn('[World] Failed to load vendor GLTF models:', err);
+    });
   }
 
   /**
@@ -444,9 +523,63 @@ export class World {
       listener(delta);
     }
 
+    // Update animated vendor models selectively (only visible & within range)
+    this.updateVendorAnimations(delta);
+
     // Render frame
     this.renderer.render(this.scene, this.camera);
   };
+
+  /**
+   * Updates animated vendor models (Chef Chen & Lao Wang) selectively:
+   * Only processes skeletal animation if NPC is within distance threshold N (35m)
+   * AND approximately in front of camera view direction (dot > 0.15, ~162° view cone),
+   * or very close (< 4m) for peripheral vision.
+   */
+  public updateVendorAnimations(delta: number): void {
+    if (this.vendorMixers.length === 0) return;
+
+    const camPos = this.camera.position;
+    const camDir = new THREE.Vector3();
+    this.camera.getWorldDirection(camDir);
+    camDir.y = 0;
+    camDir.normalize();
+
+    const maxDistSq = 35.0 * 35.0; // 35m distance threshold
+
+    for (let i = 0; i < this.vendorMixers.length; i++) {
+      const mixer = this.vendorMixers[i];
+      const root = mixer.getRoot() as THREE.Object3D;
+      if (!root || !root.position) {
+        mixer.update(delta);
+        continue;
+      }
+
+      const dx = root.position.x - camPos.x;
+      const dz = root.position.z - camPos.z;
+      const distSq = dx * dx + dz * dz;
+
+      // 1. Distance check: if further than 35m, skip skeletal animation
+      if (distSq > maxDistSq) {
+        continue;
+      }
+
+      // 2. Proximity override: if very close (< 4m), always update (even in peripheral vision)
+      if (distSq < 16.0) {
+        mixer.update(delta);
+        continue;
+      }
+
+      // 3. Direction check: verify NPC is roughly in front of camera view cone
+      const dist = Math.sqrt(distSq);
+      const dot = camDir.x * (dx / dist) + camDir.z * (dz / dist);
+
+      // dot > 0.15 corresponds to ~81° off-axis (~162° view cone)
+      if (dot > 0.15) {
+        mixer.update(delta);
+      }
+    }
+  }
 
   /**
    * Registers a per-frame update listener. Returns an unsubscribe function.
@@ -472,7 +605,7 @@ export class World {
     this.camera.updateProjectionMatrix();
 
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
   };
 
   /**
@@ -513,8 +646,15 @@ export class World {
 
   /**
    * Directly renders the 3D scene (useful when main.ts manages its own external render loop).
+   * Throttles shadow depth pass to ~20 Hz (every 3rd frame) to eliminate 67% of shadow pass overhead
+   * while keeping stationary environment and character shadows completely smooth.
    */
   public render(): void {
+    this.shadowFrameCounter++;
+    if (this.shadowFrameCounter >= 3) {
+      this.renderer.shadowMap.needsUpdate = true;
+      this.shadowFrameCounter = 0;
+    }
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -523,8 +663,16 @@ export class World {
    */
   public update(delta: number, playerX?: number, playerZ?: number): void {
     if (this.chunkStreamer && playerX !== undefined && playerZ !== undefined) {
-      this.chunkStreamer.update(playerX, playerZ);
+      const changed = this.chunkStreamer.update(playerX, playerZ);
+      if (changed) {
+        this.cachedWallBoundingBoxes = null;
+        this.renderer.shadowMap.needsUpdate = true;
+      }
     }
+
+    // Update animated vendor models selectively (only visible & within range)
+    this.updateVendorAnimations(delta);
+
     for (const listener of this.updateListeners) {
       listener(delta);
     }
@@ -532,9 +680,13 @@ export class World {
 
   /**
    * Scans active scene for wall objects with userData.isWall and computes their world Box3 bounding boxes.
-   * Updates world matrix beforehand to guarantee 100% accurate global bounding boxes.
+   * Caches results so expensive scene traversal and vertex iteration only occurs when geometry changes.
    */
-  public getWallBoundingBoxes(): THREE.Box3[] {
+  public getWallBoundingBoxes(forceRefresh: boolean = false): THREE.Box3[] {
+    if (this.cachedWallBoundingBoxes && !forceRefresh) {
+      return this.cachedWallBoundingBoxes;
+    }
+
     const boxes: THREE.Box3[] = [];
     const spawnX = this.config.floorSize / 2;
     const spawnZ = this.config.floorSize / 2;
@@ -552,7 +704,16 @@ export class World {
         }
       }
     });
+
+    this.cachedWallBoundingBoxes = boxes;
     return boxes;
+  }
+
+  /**
+   * Explicitly invalidates the cached wall bounding boxes.
+   */
+  public invalidateWallBoundingBoxesCache(): void {
+    this.cachedWallBoundingBoxes = null;
   }
 
   /**

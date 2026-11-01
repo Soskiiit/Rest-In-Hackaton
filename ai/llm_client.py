@@ -18,16 +18,96 @@ import httpx
 
 logger = logging.getLogger("ai.llm_client")
 
-# Defaults configurable via environment variables
-DEFAULT_LLAMA_SERVER_URL = os.getenv(
-    "LLAMA_SERVER_URL", "http://127.0.0.1:8080/v1/chat/completions"
-)
-DEFAULT_LLAMA_HEALTH_URL = os.getenv(
-    "LLAMA_HEALTH_URL", "http://127.0.0.1:8080/health"
-)
-DEFAULT_MODEL = os.getenv(
-    "LLM_MODEL", "unsloth/Qwen3.5-4B-MTP-GGUF:Q5_K_M"
-)
+def resolve_llm_endpoints(
+    llama_server_url: Optional[str] = None,
+    ollama_url: Optional[str] = None,
+    openai_base_url: Optional[str] = None,
+    health_url: Optional[str] = None,
+) -> Tuple[str, str]:
+    """
+    Resolves the chat completions endpoint and health probe endpoint.
+    Supports Ollama, OpenAI-compatible servers, and llama-server.
+    Priority:
+    1. OLLAMA_URL / OLLAMA_HOST
+    2. OPENAI_BASE_URL / LLM_BASE_URL
+    3. LLAMA_SERVER_URL
+    4. Default fallback: http://127.0.0.1:8080/v1/chat/completions
+    """
+    raw_ollama = ollama_url or os.getenv("OLLAMA_URL") or os.getenv("OLLAMA_HOST")
+    raw_openai = openai_base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL")
+    raw_llama = llama_server_url or os.getenv("LLAMA_SERVER_URL")
+
+    # Priority 1: OLLAMA_URL
+    if raw_ollama:
+        url = raw_ollama.strip().rstrip("/")
+        if url.endswith("/v1/chat/completions"):
+            completions = url
+            base = url[:-len("/v1/chat/completions")]
+        elif url.endswith("/api/chat"):
+            base = url[:-len("/api/chat")]
+            completions = f"{base}/v1/chat/completions"
+        elif url.endswith("/v1"):
+            base = url[:-len("/v1")]
+            completions = f"{url}/chat/completions"
+        else:
+            base = url
+            completions = f"{url}/v1/chat/completions"
+        health = health_url or os.getenv("LLAMA_HEALTH_URL") or f"{base}/v1/models"
+        return completions, health
+
+    # Priority 2: OPENAI_BASE_URL
+    if raw_openai:
+        url = raw_openai.strip().rstrip("/")
+        if url.endswith("/chat/completions"):
+            completions = url
+            base = url[:-len("/chat/completions")]
+        elif url.endswith("/v1"):
+            completions = f"{url}/chat/completions"
+            base = url
+        else:
+            completions = f"{url}/v1/chat/completions"
+            base = f"{url}/v1"
+        health = health_url or os.getenv("LLAMA_HEALTH_URL") or f"{base}/models"
+        return completions, health
+
+    # Priority 3: LLAMA_SERVER_URL
+    if raw_llama:
+        url = raw_llama.strip().rstrip("/")
+        if url.endswith("/chat/completions"):
+            completions = url
+            base = re.sub(r"/v1.*$", "", url)
+        elif url.endswith("/v1"):
+            completions = f"{url}/chat/completions"
+            base = url[:-len("/v1")]
+        else:
+            completions = f"{url}/v1/chat/completions"
+            base = url
+        health = health_url or os.getenv("LLAMA_HEALTH_URL") or f"{base}/health"
+        return completions, health
+
+    # Default fallback to localhost llama-server
+    completions = "http://127.0.0.1:8080/v1/chat/completions"
+    health = health_url or os.getenv("LLAMA_HEALTH_URL") or "http://127.0.0.1:8080/health"
+    return completions, health
+
+
+def resolve_default_model(model_override: Optional[str] = None) -> str:
+    """Resolves default model name based on LLM_MODEL or detected backend."""
+    if model_override:
+        return model_override
+    env_model = os.getenv("LLM_MODEL")
+    if env_model:
+        return env_model
+    if os.getenv("OLLAMA_URL") or os.getenv("OLLAMA_HOST"):
+        return "qwen3.5:4b"
+    return "unsloth/Qwen3.5-4B-MTP-GGUF:Q5_K_M"
+
+
+# Dynamic defaults computed via resolvers
+_resolved_completions, _resolved_health = resolve_llm_endpoints()
+DEFAULT_LLAMA_SERVER_URL = _resolved_completions
+DEFAULT_LLAMA_HEALTH_URL = _resolved_health
+DEFAULT_MODEL = resolve_default_model()
 DEFAULT_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT", "15.0"))
 DEFAULT_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT", "3.0"))
 
@@ -135,27 +215,35 @@ class LLMClient:
 
     def __init__(
         self,
-        completions_url: str = DEFAULT_LLAMA_SERVER_URL,
-        health_url: str = DEFAULT_LLAMA_HEALTH_URL,
-        model: str = DEFAULT_MODEL,
+        completions_url: Optional[str] = None,
+        health_url: Optional[str] = None,
+        model: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
     ):
-        self.completions_url = completions_url
-        self.health_url = health_url
-        self.model = model
+        if completions_url is None or health_url is None:
+            resolved_c, resolved_h = resolve_llm_endpoints(
+                llama_server_url=completions_url,
+                health_url=health_url,
+            )
+            self.completions_url = completions_url or resolved_c
+            self.health_url = health_url or resolved_h
+        else:
+            self.completions_url = completions_url
+            self.health_url = health_url
+        self.model = model or resolve_default_model()
         self.timeout = httpx.Timeout(timeout, connect=connect_timeout)
 
     async def check_health(self) -> bool:
         """
-        Pings llama-server to verify connectivity.
-        Checks /health endpoint, falling back to /v1/models.
+        Pings upstream LLM server to verify connectivity.
+        Checks configured health endpoint, falling back to /v1/models and root /.
         Returns True if reachable and responding, False otherwise.
         """
         probe_timeout = httpx.Timeout(2.0, connect=1.0)
         try:
             async with httpx.AsyncClient(timeout=probe_timeout) as client:
-                # 1. Try health endpoint
+                # 1. Try health endpoint (/health or /v1/models)
                 try:
                     resp = await client.get(self.health_url)
                     if resp.status_code == 200:
@@ -163,10 +251,27 @@ class LLMClient:
                 except httpx.HTTPError:
                     pass
 
-                # 2. Try OpenAI models endpoint
-                models_url = self.completions_url.replace("/chat/completions", "/models")
-                resp = await client.get(models_url)
-                return resp.status_code == 200
+                # 2. Try OpenAI models endpoint (/v1/models)
+                try:
+                    models_url = self.completions_url.replace("/chat/completions", "/models")
+                    if models_url != self.health_url:
+                        resp = await client.get(models_url)
+                        if resp.status_code == 200:
+                            return True
+                except httpx.HTTPError:
+                    pass
+
+                # 3. Try root endpoint (/) for Ollama
+                try:
+                    root_url = re.sub(r"/v1.*$", "/", self.completions_url)
+                    if root_url not in (self.health_url, self.completions_url):
+                        resp = await client.get(root_url)
+                        if resp.status_code == 200:
+                            return True
+                except httpx.HTTPError:
+                    pass
+
+                return False
         except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
             return False
 
@@ -276,5 +381,7 @@ __all__ = [
     "strip_markdown_fences",
     "extract_json_object",
     "parse_llm_json",
+    "resolve_llm_endpoints",
+    "resolve_default_model",
     "LLMClient",
 ]

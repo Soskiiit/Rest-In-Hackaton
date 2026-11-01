@@ -167,8 +167,15 @@ export class MockServer {
     this.emit('NPC_SPEECH', greeting);
   }
 
-  private handleDialogue(payload: { npc_id: string; choice_id: number }): void {
+  private handleDialogue(payload: { npc_id: string; choice_id?: number }): void {
     const choiceId = payload?.choice_id;
+
+    // No choice_id means "start/reopen dialogue": mirror the real server and
+    // (re)send the current greeting turn.
+    if (choiceId === undefined) {
+      this.triggerLaoWangGreeting();
+      return;
+    }
 
     if (choiceId === 1) {
       // Polite Haggling -> Mianzi +10, Aggro -10
@@ -244,6 +251,21 @@ export class MockServer {
       // Purchase completed! Deduct 450 ¥
       this.balance = Math.max(0, this.balance - 450);
       this.emit('BALANCE', { balance: this.balance, delta: -450 });
+      this.emit('NPC_SPEECH', {
+        npc_id: payload.npc_id,
+        tokens: [
+          { id: 'word_deal', zh: '成交', py: 'Chéngjiāo', ru: 'По рукам' },
+          { id: 'punct_excl', zh: '！', py: '!', ru: '!' },
+          { id: 'word_thanks', zh: '合作愉快', py: 'hézuò yúkuài', ru: 'приятно иметь дело' },
+          { id: 'punct_excl2', zh: '！', py: '!', ru: '!' },
+        ],
+        choices: [
+          { id: 4, text_zh: '谢谢老板，再见！', text_ru: 'Спасибо, босс, до свидания!', type: 'leave' },
+        ],
+        emotion: 'HAPPY',
+        mianzi: this.mianzi,
+        aggro: this.aggro,
+      } as NpcSpeechPayload);
       this.emit('NPC_STATE', {
         npc_id: payload.npc_id,
         state: 'HAPPY',
@@ -251,10 +273,10 @@ export class MockServer {
         aggro: this.aggro,
       });
     } else {
-      // Exit or neutral response
+      // Exit or neutral response -> close dialogue cleanly
       this.emit('NPC_STATE', {
         npc_id: payload.npc_id,
-        state: 'NEUTRAL',
+        state: 'LEAVE',
         mianzi: this.mianzi,
         aggro: this.aggro,
       });

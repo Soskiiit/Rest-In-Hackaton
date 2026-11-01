@@ -1,0 +1,387 @@
+{
+  "prompt_npcs": {
+    "lao_wang": {
+      "status_code": 200,
+      "elapsed_ms": 1347.72,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 2.048,
+        "byte_length": 65580
+      },
+      "tokens_count": 5
+    },
+    "chef_chen": {
+      "status_code": 200,
+      "elapsed_ms": 362.66,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 1.365,
+        "byte_length": 43734
+      },
+      "tokens_count": 3
+    },
+    "guard_zhang": {
+      "status_code": 200,
+      "elapsed_ms": 364.61,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 1.515,
+        "byte_length": 48512
+      },
+      "tokens_count": 3
+    },
+    "clothier_liu": {
+      "status_code": 404,
+      "elapsed_ms": 0.93,
+      "is_200": false,
+      "is_500": false,
+      "error_detail": "{\"detail\":\"NPC 'clothier_liu' not found\"}"
+    },
+    "apothecary_ba": {
+      "status_code": 404,
+      "elapsed_ms": 0.44,
+      "is_200": false,
+      "is_500": false,
+      "error_detail": "{\"detail\":\"NPC 'apothecary_ba' not found\"}"
+    },
+    "pawn_zhao": {
+      "status_code": 404,
+      "elapsed_ms": 0.38,
+      "is_200": false,
+      "is_500": false,
+      "error_detail": "{\"detail\":\"NPC 'pawn_zhao' not found\"}"
+    }
+  },
+  "canonical_npcs_default": {
+    "lao_wang": {
+      "status_code": 200,
+      "elapsed_ms": 609.65,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 2.048,
+        "byte_length": 65580
+      },
+      "tokens_count": 5
+    },
+    "auntie_li": {
+      "status_code": 200,
+      "elapsed_ms": 565.46,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 2.709,
+        "byte_length": 86742
+      },
+      "tokens_count": 4
+    },
+    "electronics_zhang": {
+      "status_code": 200,
+      "elapsed_ms": 375.76,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 1.707,
+        "byte_length": 54656
+      },
+      "tokens_count": 4
+    },
+    "chef_chen": {
+      "status_code": 200,
+      "elapsed_ms": 334.23,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 1.365,
+        "byte_length": 43734
+      },
+      "tokens_count": 3
+    },
+    "granny_liu": {
+      "status_code": 200,
+      "elapsed_ms": 392.23,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 1.899,
+        "byte_length": 60800
+      },
+      "tokens_count": 4
+    },
+    "guard_zhang": {
+      "status_code": 200,
+      "elapsed_ms": 327.03,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 1.515,
+        "byte_length": 48512
+      },
+      "tokens_count": 3
+    }
+  },
+  "canonical_npcs_formant": {
+    "lao_wang": {
+      "status_code": 200,
+      "elapsed_ms": 23.81,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 1.778,
+        "byte_length": 56952
+      },
+      "tokens_count": 5
+    },
+    "auntie_li": {
+      "status_code": 200,
+      "elapsed_ms": 16.43,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 1.203,
+        "byte_length": 38554
+      },
+      "tokens_count": 4
+    },
+    "electronics_zhang": {
+      "status_code": 200,
+      "elapsed_ms": 14.63,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 1.293,
+        "byte_length": 41418
+      },
+      "tokens_count": 4
+    },
+    "chef_chen": {
+      "status_code": 200,
+      "elapsed_ms": 10.2,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 0.689,
+        "byte_length": 22082
+      },
+      "tokens_count": 3
+    },
+    "granny_liu": {
+      "status_code": 200,
+      "elapsed_ms": 14.11,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 1.263,
+        "byte_length": 40470
+      },
+      "tokens_count": 4
+    },
+    "guard_zhang": {
+      "status_code": 200,
+      "elapsed_ms": 11.91,
+      "is_200": true,
+      "is_500": false,
+      "has_root_audio": true,
+      "has_parsed_audio": true,
+      "audio_match": true,
+      "wav_valid": true,
+      "wav_info": {
+        "riff": true,
+        "wave": true,
+        "channels": 1,
+        "bit_depth": 16,
+        "sample_rate": 16000,
+        "duration_sec": 0.867,
+        "byte_length": 27772
+      },
+      "tokens_count": 3
+    }
+  },
+  "resilience": {
+    "status_code": 200,
+    "root_audio_null": true,
+    "parsed_audio_null": true,
+    "tokens_intact": true,
+    "tokens_count": 5,
+    "passed": true
+  },
+  "benchmarks": {
+    "kokoro_default": {
+      "concurrency": 50,
+      "tts_engine": "kokoro",
+      "forced_mock_mode": false,
+      "count": 50,
+      "status_200_count": 50,
+      "status_other_count": 0,
+      "avg_ms": 7739.05,
+      "min_ms": 442.94,
+      "max_ms": 15067.92,
+      "p50_ms": 7879.54,
+      "p95_ms": 14464.09,
+      "p99_ms": 15067.92,
+      "wall_ms": 15222.26,
+      "pass_lt_20ms": false
+    },
+    "formant_with_probe": {
+      "concurrency": 50,
+      "tts_engine": "formant",
+      "forced_mock_mode": false,
+      "count": 50,
+      "status_200_count": 50,
+      "status_other_count": 0,
+      "avg_ms": 388.99,
+      "min_ms": 191.86,
+      "max_ms": 593.72,
+      "p50_ms": 395.1,
+      "p95_ms": 577.6,
+      "p99_ms": 593.72,
+      "wall_ms": 765.64,
+      "pass_lt_20ms": false
+    },
+    "formant_with_mock_mode": {
+      "concurrency": 50,
+      "tts_engine": "formant",
+      "forced_mock_mode": true,
+      "count": 50,
+      "status_200_count": 50,
+      "status_other_count": 0,
+      "avg_ms": 11.26,
+      "min_ms": 10.78,
+      "max_ms": 14.58,
+      "p50_ms": 11.06,
+      "p95_ms": 12.85,
+      "p99_ms": 14.58,
+      "wall_ms": 563.24,
+      "pass_lt_20ms": true
+    }
+  }
+}

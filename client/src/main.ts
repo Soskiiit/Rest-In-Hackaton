@@ -39,8 +39,9 @@ const MOVE_SEND_INTERVAL_SEC = 0.05; // 20 Hz (50 ms)
 export const LAO_WANG_CONFIG = {
   id: 'lao_wang',
   name: 'Лао Ван (老王)',
-  worldPosition: { x: 110.0, y: 0.0, z: 109.5 },
-  chunkCoord: { cx: 5, cz: 5 },
+  // Central pavilion in North Plaza; matches the server catalog entry.
+  worldPosition: { x: 100.0, y: 0.0, z: 124.0 },
+  chunkCoord: { cx: 5, cz: 6 },
   interactionRadius: 3.5,
   interactionRadiusSq: 12.25, // 3.5 * 3.5
   promptKey: 'F',
@@ -55,8 +56,9 @@ export const TEAPOT_CONFIG = {
   zh: '茶壶',
   py: 'Cháhú',
   question: 'Как переводится это слово?',
-  worldPosition: { x: 110.0, y: 0.9, z: 108.5 },
-  chunkCoord: { cx: 5, cz: 5 },
+  // Teapot on the central pavilion counter.
+  worldPosition: { x: 99.2, y: 0.9, z: 124.3 },
+  chunkCoord: { cx: 5, cz: 6 },
   interactionRadius: 3.0,
   interactionRadiusSq: 9.0, // 3.0 * 3.0
   promptKey: 'E',
@@ -105,11 +107,18 @@ class Application {
   private playerBalance = 500;
   private knownWords = new Set<string>();
 
+  // Obstacle Collision Caching
+  private lastSyncedObstacles: any = null;
+
   // Modal Lock & Interaction State
   private isModalActive = false;
   private isNearLaoWang = false;
   private isNearTeapot = false;
+  private isDialogueActive = false;
   private activeNpcId: string | null = null;
+  private activeTurnId: string | null = null;
+  private speechDismissTimeout: number | null = null;
+  private lastNpcSpeech: Record<string, NpcSpeechPayload> = {};
 
   public async init(): Promise<void> {
     console.log('[Main] Initializing Rest-In-Hackaton Client...');
@@ -268,9 +277,11 @@ class Application {
 
     for (;;) {
       if (!session) {
+        this.setModalActive(true);
         const result = await authScreen.show(message);
         if (result.kind === 'offline') {
           authScreen.hide();
+          this.setModalActive(false);
           this.activateMockServer();
           return;
         }
@@ -281,6 +292,7 @@ class Application {
       authScreen.showConnecting();
       if (await this.connectWithSession(session)) {
         authScreen.hide();
+        this.setModalActive(false);
         this.hud.showToast(`Добро пожаловать, ${session.player.login}!`);
         return;
       }
@@ -344,6 +356,7 @@ class Application {
     this.setAuthStatus(null);
     this.otherPlayerManager.clear();
     this.playerController.exitPointerLock();
+    this.setModalActive(true);
     this.hud.setWsStatus('disconnected');
     if (this.authClient && this.authScreen && !this.authScreen.isVisible()) {
       await this.startOnlineSession(null, message);
@@ -381,8 +394,14 @@ class Application {
 
   private bindInputAndPointerLock(): void {
     // Clicking instructions blocker engages PointerLock
-    this.blockerEl.addEventListener('click', () => {
-      if (!this.isModalActive) {
+    this.blockerEl.addEventListener('click', (event: MouseEvent) => {
+      if (event?.target && (event.target as HTMLElement).closest('button, input, a, select')) {
+        return;
+      }
+      if (this.authScreen?.isVisible()) {
+        return;
+      }
+      if (!this.isModalActive && !this.dialogueUI?.isOpen() && !this.quizPanel?.isOpen()) {
         this.playerController.requestPointerLock();
       }
     });
@@ -392,7 +411,7 @@ class Application {
     });
 
     this.playerController.onUnlock(() => {
-      if (!this.isModalActive) {
+      if (!this.isModalActive && !this.isDialogueActive && !this.authScreen?.isVisible() && !this.dialogueUI?.isOpen() && !this.quizPanel?.isOpen()) {
         this.blockerEl.classList.remove('hidden');
       }
     });
@@ -448,25 +467,62 @@ class Application {
       this.playerController.exitPointerLock();
       this.blockerEl.classList.add('hidden');
     } else {
-      // Re-enable pointer lock prompt if needed
-      this.blockerEl.classList.remove('hidden');
+      // Closing a modal in-game must not pop up the Esc instructions blocker
+      this.blockerEl.classList.add('hidden');
     }
   }
 
   /**
-   * Inbound NPC Speech packet handler. Opens or updates DialogueUI and engages modal lock.
+   * Inbound NPC Speech packet handler. Caches speech and only opens DialogueUI
+   * if the user actively initiated dialogue via [F] or is currently in an active conversation.
    */
   private handleNpcSpeech(payload: NpcSpeechPayload): void {
     console.log(`[Main] NPC speech received from '${payload.npc_id}' (${payload.tokens?.length ?? 0} tokens)`);
+    this.lastNpcSpeech[payload.npc_id] = payload;
     this.activeNpcId = payload.npc_id;
+    this.activeTurnId = payload.turn_id ?? null;
 
-    // 1. Activate UI modal lock (frees mouse pointer, suspends WASD)
-    this.setModalActive(true);
+    // Approaching an NPC must NEVER automatically open dialogue or break pointer lock!
+    // Dialogue should ONLY open when the player presses [F] or is continuing an active dialogue.
+    if (!this.isDialogueActive) {
+      return;
+    }
+
+    this.openInteractiveDialogue(payload);
+  }
+
+  private openInteractiveDialogue(payload: NpcSpeechPayload): void {
+    const hasChoices = Array.isArray(payload.choices) && payload.choices.length > 0;
+    const isInteractive = hasChoices && Boolean(payload.turn_id);
+
+    // 1. Only activate UI modal lock (frees mouse pointer, suspends WASD) if there are interactive choices!
+    if (isInteractive) {
+      this.setModalActive(true);
+    } else {
+      this.setModalActive(false);
+    }
 
     // 2. Hide proximity prompt
     this.hideInteractionPrompt();
 
-    // 3. Open DialogueUI
+    // 3. Play TTS audio from AI service (Base64 WAV)
+    if (payload.audio_base64) {
+      try {
+        const binary = atob(payload.audio_base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.onended = () => URL.revokeObjectURL(url);
+        audio.play().catch((err) => console.warn('[Main] TTS audio play failed:', err));
+        console.log(`[Main] Playing TTS audio (${bytes.length} bytes) for NPC '${payload.npc_id}'`);
+      } catch (err) {
+        console.warn('[Main] Failed to decode/play TTS audio:', err);
+      }
+    }
+
+    // 4. Open DialogueUI
     this.dialogueUI.open(
       payload,
       (choiceId: number) => this.handleDialogueChoice(choiceId),
@@ -477,26 +533,34 @@ class Application {
 
   /**
    * Choice Selection Callback: Dispatches DIALOGUE packet via wsClient.
+   * Includes turn_id to prevent STALE_CHOICE errors on server.
    */
   private handleDialogueChoice(choiceId: number): void {
     const npcId = this.activeNpcId || LAO_WANG_CONFIG.id;
-    console.log(`[Main] Dispatching DIALOGUE packet: npc_id='${npcId}', choice_id=${choiceId}`);
+    console.log(`[Main] Dispatching DIALOGUE packet: npc_id='${npcId}', choice_id=${choiceId}, turn_id='${this.activeTurnId}'`);
 
     if (this.wsClient) {
       this.wsClient.send('DIALOGUE', {
         npc_id: npcId,
         choice_id: choiceId,
+        ...(this.activeTurnId ? { turn_id: this.activeTurnId } : {}),
       });
     }
   }
 
   /**
-   * Dialogue closed: restores player controls and clears active NPC.
+   * Dialogue closed: restores player controls, resets active dialogue flag and clears active NPC.
    */
   private handleDialogueClose(): void {
     console.log('[Main] Dialogue overlay closed. Restoring player movement.');
+    this.isDialogueActive = false;
     this.setModalActive(false);
     this.activeNpcId = null;
+    this.activeTurnId = null;
+    if (this.speechDismissTimeout !== null) {
+      window.clearTimeout(this.speechDismissTimeout);
+      this.speechDismissTimeout = null;
+    }
   }
 
   /**
@@ -521,7 +585,7 @@ class Application {
   }
 
   /**
-   * Evaluates distance between player, Lao Wang (110.0, 0.0, 109.5), and Antique Teapot (110.0, 0.9, 108.5).
+   * Evaluates distance between player, Lao Wang (100.0, 0.0, 124.0), and Antique Teapot (99.2, 0.9, 124.3).
    * Toggles interaction prompt [F] or [E] without collision.
    */
   public checkProximity(pos: { x: number; y: number; z: number }): void {
@@ -538,6 +602,7 @@ class Application {
       return;
     }
 
+    // Both interactables live at the central pavilion, matching the server.
     const dxLao = pos.x - LAO_WANG_CONFIG.worldPosition.x;
     const dzLao = pos.z - LAO_WANG_CONFIG.worldPosition.z;
     const distSqLao = dxLao * dxLao + dzLao * dzLao;
@@ -646,6 +711,7 @@ class Application {
    */
   public triggerLaoWangDialogue(): void {
     console.log('[Main] Opening Lao Wang dialogue via [F] interaction.');
+    this.isDialogueActive = true;
 
     // 1. MockServer instance
     if (this.mockServer) {
@@ -660,12 +726,18 @@ class Application {
       return;
     }
 
-    // 3. Live WebSocket server
+    // 3. Live WebSocket server.
+    // Start/reopen the dialogue without choice_id: the server generates (or
+    // resends) the current turn and returns it together with a fresh turn_id.
     if (this.wsClient && this.wsClient.isConnected) {
       this.wsClient.send('DIALOGUE', {
         npc_id: LAO_WANG_CONFIG.id,
-        choice_id: 0,
       });
+
+      // If we already received recent speech from syncScenes, show it immediately
+      if (this.lastNpcSpeech[LAO_WANG_CONFIG.id]) {
+        this.openInteractiveDialogue(this.lastNpcSpeech[LAO_WANG_CONFIG.id]);
+      }
       return;
     }
 
@@ -792,9 +864,12 @@ class Application {
     }
 
     // 2. Update Controllers & Simulations
-    // Sync obstacle collision bounding boxes from active world chunks (excluding player spawn area)
+    // Sync obstacle collision bounding boxes from active world chunks (cached, only recomputed when chunks load/unload)
     const walls = this.world.getWallBoundingBoxes?.() ?? [];
-    this.playerController.setObstacles(walls);
+    if (walls !== this.lastSyncedObstacles) {
+      this.lastSyncedObstacles = walls;
+      this.playerController.setObstacles(walls);
+    }
 
     this.playerController.update(delta);
     const pos = this.playerController.getPosition();

@@ -33,6 +33,7 @@ try:
         Choice,
         ChoiceType,
         DialogueContext,
+        DialogueParsed,
         DialogueRequest,
         DialogueResponse,
         EmotionType,
@@ -61,6 +62,7 @@ except (ImportError, ModuleNotFoundError):
         Choice,
         ChoiceType,
         DialogueContext,
+        DialogueParsed,
         DialogueRequest,
         DialogueResponse,
         EmotionType,
@@ -466,6 +468,11 @@ def clamp_and_validate_response(
     - Enforces 4 choices and valid tokens
     - Populates dual schema fields (root fields + raw + parsed)
     """
+    if hasattr(raw_data, "model_dump"):
+        raw_data = raw_data.model_dump()
+    elif not isinstance(raw_data, dict):
+        raw_data = dict(raw_data) if hasattr(raw_data, "__iter__") else {}
+
     player_msg_lower = req.player_message.lower()
 
     # 1. Price Clamping (strictly [price_floor, 100000] per dialogue.go:108)
@@ -538,6 +545,23 @@ def clamp_and_validate_response(
     speech_tokens = sanitize_speech_tokens(req.npc_id, raw_tokens)
     choices = sanitize_choices(req.npc_id, raw_data.get("choices"))
 
+    # Synthesize speech audio for the NPC reply
+    audio_base64: Optional[str] = None
+    try:
+        text_to_speak = "".join(t.zh for t in speech_tokens if t.zh)
+        if text_to_speak:
+            b64_audio, _ = synthesize_to_base64(
+                text=text_to_speak,
+                tokens=speech_tokens,
+                speaker=req.npc_id,
+            )
+            audio_base64 = b64_audio
+    except Exception as tts_exc:
+        logger.warning(
+            f"TTS synthesis failed for NPC '{req.npc_id}': {tts_exc}. Continuing without audio."
+        )
+        audio_base64 = None
+
     # Go server envelope alignment
     parsed_payload = {
         "speech_tokens": [t.model_dump() for t in speech_tokens],
@@ -548,6 +572,7 @@ def clamp_and_validate_response(
         "aggro_delta": effective_aggro_delta,
         "fsm_state": fsm_state,
         "choices": [c.model_dump() for c in choices],
+        "audio_base64": audio_base64,
     }
 
     return DialogueResponse(
@@ -560,6 +585,7 @@ def clamp_and_validate_response(
         fsm_state=fsm_state,
         choices=choices,
         raw=raw_str,
+        audio_base64=audio_base64,
         parsed=parsed_payload,
     )
 
