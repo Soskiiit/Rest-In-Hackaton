@@ -8,12 +8,12 @@
  */
 
 export const SCENE_COLORS = {
-  // --- FLOOR & GROUND (ПОЛ) ---
-  floorColor: 0x71767a,          // Базовый цвет пола мира
+  // --- FLOOR & GROUND (ПОЛ И ТРАВА) ---
+  floorColor: 0x4f7d2c,          // Светлый сочный зелёный цвет земли/травы (Lighter vibrant green grass)
   stoneTileLightColor: 0x7a8085, // Светло-серый цвет светлых плиток (Stone_Light)
   stoneTileDarkColor: 0x71767a,  // Светло-серый цвет темных плиток (Stone_Dark)
-  floorGridLine1: 0x71767a,      // Цвет основных линий сетки пола
-  floorGridLine2: 0x71767a,      // Цвет дополнительных линий сетки пола
+  floorGridLine1: 0x1f3412,      // Тёмный цвет основных линий сетки пола (Darker grid line 1)
+  floorGridLine2: 0x182a0e,      // Тёмный цвет дополнительных линий сетки пола (Darker grid line 2)
 
   // --- SKY & FOG (НЕБО И ТУМАН) ---
   fogColor: 0x99b6c9,            // Цвет тумана и фона неба
