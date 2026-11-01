@@ -24,3 +24,6 @@ client/node_modules/
 .run/
 
 server/.run_server
+
+# vitest cache
+.vite/
