@@ -302,8 +302,50 @@ export class MarketLayout {
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(4, 3);
+    // Base repeat 1,1; UV mapping scaled per-wall by world dimensions so all bricks are uniform in world size
+    texture.repeat.set(1, 1);
     return texture;
+  }
+
+  /**
+   * Adjusts BoxGeometry UV coordinates so that texture tiles uniformly in world units (meters)
+   * on all sides of the wall, preventing stretching on long or short wall segments.
+   */
+  public static applyWorldUVs(geo: THREE.BoxGeometry, width: number, height: number, depth: number): void {
+    // 1 brick texture tile covers 2.0 meters horizontally and 1.5 meters vertically
+    const tileWidth = 2.0;
+    const tileHeight = 1.5;
+
+    const uvs = geo.attributes.uv;
+    // BoxGeometry face vertex order:
+    // Face 0: +X side (depth x height) -> vertices 0..3
+    // Face 1: -X side (depth x height) -> vertices 4..7
+    // Face 2: +Y top (width x depth)   -> vertices 8..11
+    // Face 3: -Y bot (width x depth)   -> vertices 12..15
+    // Face 4: +Z front (width x height)-> vertices 16..19
+    // Face 5: -Z back (width x height) -> vertices 20..23
+
+    const setFaceUVs = (faceIdx: number, uSpan: number, vSpan: number) => {
+      const base = faceIdx * 4;
+      uvs.setXY(base + 0, 0, vSpan);
+      uvs.setXY(base + 1, uSpan, vSpan);
+      uvs.setXY(base + 2, 0, 0);
+      uvs.setXY(base + 3, uSpan, 0);
+    };
+
+    const uX = depth / tileWidth;
+    const vY = height / tileHeight;
+    const uZ = width / tileWidth;
+    const vTop = depth / tileHeight;
+
+    setFaceUVs(0, uX, vY);
+    setFaceUVs(1, uX, vY);
+    setFaceUVs(2, uZ, vTop);
+    setFaceUVs(3, uZ, vTop);
+    setFaceUVs(4, uZ, vY);
+    setFaceUVs(5, uZ, vY);
+
+    uvs.needsUpdate = true;
   }
 
   /**
@@ -334,6 +376,7 @@ export class MarketLayout {
     const walls = this.getWalls();
     for (const w of walls) {
       const wallGeo = new THREE.BoxGeometry(w.width, w.height, w.depth);
+      this.applyWorldUVs(wallGeo, w.width, w.height, w.depth);
       const wall = new THREE.Mesh(wallGeo, wallMat);
       wall.position.set(w.x, w.height / 2, w.z);
       wall.receiveShadow = true;
