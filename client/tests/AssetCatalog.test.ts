@@ -11,6 +11,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { AssetCatalog, AssetDefinition } from '../src/editor/AssetCatalog';
 import { AssetCatalogUI } from '../src/editor/AssetCatalogUI';
 import { PropertyInspector, SelectableEntityLike } from '../src/editor/PropertyInspector';
@@ -712,5 +714,36 @@ describe('PropertyInspector Component', () => {
 
     const details = mockDoc.body.querySelector('.inspector-details');
     expect(details?.style.display).toBe('none');
+  });
+});
+
+// ============================================================================
+// Market GLB models (carts on wheels and empty stalls)
+// ============================================================================
+
+describe('Market GLB models', () => {
+  const MARKET_IDS = ['market_cart_jianbing', 'market_cart_tanghulu', 'market_stall_pavilion', 'market_stall_awning'];
+
+  it('registers carts and empty stalls as structures backed by existing GLB files', () => {
+    const catalog = new AssetCatalog();
+    for (const id of MARKET_IDS) {
+      const asset = catalog.getAssetById(id);
+      expect(asset?.category).toBe('structures');
+      expect(asset?.modelPath).toMatch(/^\/models\/market\/[a-z_]+\.glb$/);
+      expect(existsSync(fileURLToPath(new URL('../public' + asset!.modelPath, import.meta.url)))).toBe(true);
+    }
+  });
+
+  it('spawns a selectable placeholder synchronously when no browser is available', () => {
+    const catalog = new AssetCatalog();
+    for (const id of MARKET_IDS) {
+      const obj = catalog.spawnAsset(id, new THREE.Vector3(10, 0, 20));
+      expect(obj.userData.isSelectable).toBe(true);
+      expect(obj.userData.assetId).toBe(id);
+      expect(obj.position.toArray()).toEqual([10, 0, 20]);
+      const box = new THREE.Box3().setFromObject(obj);
+      expect(box.min.y).toBeCloseTo(0);
+      expect(box.max.y).toBeGreaterThan(2);
+    }
   });
 });

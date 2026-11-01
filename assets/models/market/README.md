@@ -150,4 +150,21 @@ Google Chrome через Playwright, проверяет загрузку, кли
 изображения в `previews/`. Другой Chromium: `PLAYWRIGHT_CHROMIUM_EXECUTABLE=<путь>`.
 
 Проверено: Chrome на macOS, 1280 × 1000. Все GLB: 0 ошибок, 0 предупреждений валидатора.
-Интеграция в игровой клиент и серверные изменения не выполнялись.
+
+## Редактор уровней
+
+Все четыре модели зарегистрированы в каталоге редактора (`client/src/editor/AssetCatalog.ts`),
+вкладка «Структуры»:
+
+| ID в каталоге | Файл |
+|---|---|
+| `market_cart_jianbing` | `/models/market/cart_jianbing.glb` |
+| `market_cart_tanghulu` | `/models/market/cart_tanghulu.glb` |
+| `market_stall_pavilion` | `/models/market/stall_pavilion.glb` |
+| `market_stall_awning` | `/models/market/stall_awning.glb` |
+
+Экземпляр создаётся сразу с полупрозрачной заглушкой по габаритам модели; после загрузки GLB
+(один запрос на файл, общий для всех экземпляров) заглушка заменяется моделью и запускается Idle.
+Микшер доступен в `userData.mixer`, все клипы — в `userData.animations`.
+В чанке объект сохраняется как `buildings: [{ type: "market_cart_jianbing", x, z }]`;
+формат чанка не хранит поворот, поэтому после перезагрузки модель стоит лицом к +Z.
