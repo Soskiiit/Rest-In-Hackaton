@@ -111,6 +111,7 @@ class Model:
         elif shape=="head":v,f=sphere(10,5)
         elif shape=="cone":v,f=lathe([(0,1,1),(.08,1,1),(1,.025,.025)],12)
         elif shape=="mustache":v,f=sweep([(0,0),(.09,-.04),(.17,-.14),(.22,-.28),(.23,-.40)],[.045,.043,.035,.02,.001])
+        elif shape=="mustache_up":v,f=sweep([(0,0),(.10,-.015),(.22,.015),(.31,.10),(.34,.21),(.30,.26)],[.036,.04,.035,.028,.018,.001])
         elif shape=="eye_arc":v,f=sweep([(-.105,0),(-.055,.04),(0,.052),(.055,.04),(.105,0)],[.009,.014,.015,.014,.009])
         elif shape=="smile":v,f=sweep([(-.065,.02),(-.035,-.01),(0,-.02),(.035,-.01),(.065,.02)],[.006,.009,.009,.009,.006])
         elif shape=="small":v,f=sphere(6,3)
@@ -179,17 +180,25 @@ class Model:
         return {"file":path.name,"bytes":len(blob),"triangles":triangles,
                 "nodes":len(self.g["nodes"]),"animations":[a["name"] for a in self.g["animations"]]}
 
-def build():
-    m=Model('comical_vendor')
-    for name,color in {'skin':(.94,.53,.29),'red':(.86,.025,.014),'gold':(1,.70,.015),'hat':(1,.78,.018),'hat_under':(.92,.43,.008),'dark':(.025,.032,.045),'shoe':(.045,.055,.065),'blush':(.92,.29,.10)}.items():m.mat(name,color)
+def build(config=None):
+    config=config or {}
+    m=Model(config.get('id','comical_vendor'))
+    for name,color in {'skin':(.94,.53,.29),'red':(.86,.025,.014),'gold':(1,.70,.015),'hat':(1,.78,.018),'hat_under':(.92,.43,.008),'dark':(.025,.032,.045),'shoe':(.045,.055,.065),'blush':(.92,.29,.10)}.items():m.mat(name,config.get('colors',{}).get(name,color))
+    if config:m.mat('hair',config.get('hair_color',(.025,.025,.035)))
     root=0
+    if config:m.g['nodes'][root]['scale']=config.get('scale',[1,1,1])
     hips=m.node('Hips',root,(0,.29,0))
     torso=m.node('Torso',hips,(0,.29,0))
+    if config:m.g['nodes'][torso]['scale']=[config.get('width',1),1,config.get('depth',1)]
     m.part('Coat',torso,(0,0,0),(.30,.28,.22),'red','body')
     m.part('Collar',torso,(0,.255,0),(.105,.045,.11),'gold','box')
     m.part('GoldSeam',torso,(0,.015,.217),(.009,.235,.009),'gold','box')
     for i in range(4):m.part('FrogClosure_'+str(i),torso,(.007,.17-i*.105,.23),(.066,.008,.012),'gold','box')
+    if config.get('vest'):
+        for side in [-1,1]:m.part('VestPanel_'+str(side),torso,(side*.18,.015,.205),(.10,.23,.035),'hat_under','box')
+        m.part('VestBack',torso,(0,.015,-.205),(.28,.23,.035),'hat_under','box')
     head=m.node('Head',torso,(0,.52,.015))
+    if config:m.g['nodes'][head]['scale']=[config.get('head',1)]*3
     m.part('BigHead',head,(0,0,0),(.34,.355,.285),'skin','head')
     for side in [-1,1]:
         m.part(('L' if side>0 else 'R')+'_Ear',head,(side*.33,-.06,.01),(.066,.091,.057),'skin','small')
@@ -203,14 +212,31 @@ def build():
         eye=m.node(prefix+'_EyePivot',head,(side*.16,.045,.267));eyes.append((eye,side))
         m.part(prefix+'_SmilingEye',eye,(0,0,0),(1,1,1),'dark','eye_arc')
     moustache=m.node('MustachePivot',head,(0,-.085,.289))
-    m.part('Mustache_R',moustache,(0,0,0),(1,1,1),'dark','mustache')
-    m.part('Mustache_L',moustache,(0,0,0),(-1,1,1),'dark','mustache')
-    # Negative scale mirrors geometry; exported face winding remains glTF compliant.
+    if config.get('mustache','down')!='none':
+        shape='mustache_up' if config.get('mustache')=='up' else 'mustache'
+        m.part('Mustache_R',moustache,(0,0,0),(1,1,1),'dark',shape)
+        m.part('Mustache_L',moustache,(0,0,0),(-1,1,1),'dark',shape)
     m.part('Smile',head,(0,-.205,.266),(1,1,1),'hat_under','smile')
-    m.part('Goatee',head,(0,-.305,.195),(.025,.055,.018),'dark','box',quat(.15))
-    hat=m.node('Hat',head,(0,.25,0),quat(0,0,-.035))
-    m.part('ConeHat',hat,(0,0,0),(.68,.34,.68),'hat','cone')
-    m.part('HatUnderside',hat,(0,-.008,0),(.678,.012,.678),'hat_under','small')
+    if config.get('goatee',not bool(config)):
+        m.part('Goatee',head,(0,-.305,.195),(.025,.055,.018),'dark','box',quat(.15))
+    if config.get('hat',not bool(config)):
+        hat=m.node('Hat',head,(0,.25,0),quat(0,0,-.035))
+        m.part('ConeHat',hat,(0,0,0),(.68,.34,.68),'hat','cone')
+        m.part('HatUnderside',hat,(0,-.008,0),(.678,.012,.678),'hat_under','small')
+    else:
+        hair=m.node('Hair',head)
+        m.part('HairCap',hair,(0,.19,-.025),(.35,.20,.28),'hair','cap')
+        m.part('HairBack',hair,(0,.06,-.25),(.28,.17,.05),'hair','box')
+        style=config.get('hair','short')
+        if style in ['short','fringe','swept']:
+            for i in range(3):
+                tilt=(-.20 if style=='swept' else (i-1)*.12)
+                m.part('Fringe_'+str(i),hair,((i-1)*.16,.19,.23),(.085,.045 if style=='short' else .065,.035),'hair','box',quat(0,0,tilt))
+        if style=='bun':
+            m.part('TopBun',hair,(0,.44,-.055),(.14,.11,.14),'hair','small')
+            m.part('BunBand',hair,(0,.38,-.055),(.125,.016,.125),'gold','box')
+        if style=='grey':
+            for side in [-1,1]:m.part('SideTuft_'+str(side),hair,(side*.31,.10,-.02),(.07,.09,.13),'hair','small',quat(0,0,side*-.25))
     arms={}
     for side in [-1,1]:
         prefix='L' if side>0 else 'R'
@@ -266,9 +292,29 @@ def build():
         overrides[ankle]=(t,[quat(-side*.42*math.sin(2*PI*v))for v in t])
     for side,(joint,wrist) in arms.items():overrides[joint]=(t,[quat(-side*.34*math.sin(2*PI*v),0,side*.18)for v in t])
     clip('Walk',1,overrides)
+    if config.get('wide_pants'):
+        for n in m.g['nodes']:
+            if n['name'].endswith('_ShortLeg'):n['scale'][0]*=1.35;n['scale'][2]*=1.2
     info=m.save()
     info.update(units='meters',up='+Y',forward='+Z',origin='between feet at ground',rig='rigid articulated nodes; no skinning',root_motion=False,clips={'Idle':{'duration':3.2,'loop':True},'Wave':{'duration':2.2,'loop':False},'Angry':{'duration':1.8,'loop':False},'Walk':{'duration':1,'loop':True}})
-    (OUT/'manifest.json').write_text(json.dumps(info,ensure_ascii=False,indent=2)+'\n')
+    if config:info.update(id=config['id'],label=config['label'],mustache=config.get('mustache','none'),hair=config.get('hair'),scale=config.get('scale',[1,1,1]))
+    (OUT/(config['id']+'.json' if config else 'manifest.json')).write_text(json.dumps(info,ensure_ascii=False,indent=2)+'\n')
     print(json.dumps(info,ensure_ascii=False))
+    return info
 
-if __name__=='__main__':build()
+VARIANTS=[
+ {'id':'vendor_green','label':'Зелёный','colors':{'red':(.03,.32,.10),'gold':(.83,.65,.20)},'mustache':'none','hair':'short','scale':[1,1,1]},
+ {'id':'vendor_blue','label':'Синий с пучком','colors':{'red':(.025,.11,.50),'gold':(.80,.69,.37)},'mustache':'none','hair':'bun','scale':[.92,1.10,.96],'width':.95},
+ {'id':'vendor_yellow','label':'Жёлтый кругляш','colors':{'red':(.72,.40,.015),'gold':(.34,.12,.025)},'mustache':'none','hair':'fringe','hair_color':(.12,.055,.018),'scale':[1.08,.91,1.04],'width':1.08,'depth':1.08},
+ {'id':'vendor_vest','label':'Седой в жилете','colors':{'red':(.83,.77,.61),'hat_under':(.24,.025,.065),'gold':(.44,.31,.12),'dark':(.045,.075,.16)},'hair':'grey','hair_color':(.55,.58,.61),'mustache':'none','vest':True,'wide_pants':True,'scale':[1.02,.97,1.02]},
+ {'id':'vendor_curly','label':'Усатый весельчак','colors':{'red':(.015,.35,.33),'gold':(.91,.56,.055)},'hair':'swept','mustache':'up','scale':[1.02,1.01,1.04],'width':1.07,'depth':1.08},
+ {'id':'vendor_orange','label':'Оранжевый в шляпе','colors':{'red':(.94,.20,.018),'gold':(.30,.10,.025)},'hat':True,'mustache':'down','goatee':True,'scale':[1.04,1.02,1.0],'width':1.06}
+]
+
+if __name__=='__main__':
+    import argparse
+    parser=argparse.ArgumentParser();parser.add_argument('--variants',action='store_true');args=parser.parse_args()
+    if args.variants:
+        entries=[build(config)for config in VARIANTS]
+        (OUT/'variants.json').write_text(json.dumps({'models':entries},ensure_ascii=False,indent=2)+'\n')
+    else:build()

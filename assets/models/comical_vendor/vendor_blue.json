@@ -1,0 +1,45 @@
+{
+  "file": "vendor_blue.glb",
+  "bytes": 82360,
+  "triangles": 1108,
+  "nodes": 50,
+  "animations": [
+    "Idle",
+    "Wave",
+    "Angry",
+    "Walk"
+  ],
+  "units": "meters",
+  "up": "+Y",
+  "forward": "+Z",
+  "origin": "between feet at ground",
+  "rig": "rigid articulated nodes; no skinning",
+  "root_motion": false,
+  "clips": {
+    "Idle": {
+      "duration": 3.2,
+      "loop": true
+    },
+    "Wave": {
+      "duration": 2.2,
+      "loop": false
+    },
+    "Angry": {
+      "duration": 1.8,
+      "loop": false
+    },
+    "Walk": {
+      "duration": 1,
+      "loop": true
+    }
+  },
+  "id": "vendor_blue",
+  "label": "Синий с пучком",
+  "mustache": "none",
+  "hair": "bun",
+  "scale": [
+    0.92,
+    1.1,
+    0.96
+  ]
+}
