@@ -320,6 +320,17 @@ class Application {
 
     // 2. Initialize Player Controller (WASD + Mouse Look)
     this.playerController = new PlayerController(this.world.getCamera(), document.body);
+    this.playerController.attachLocalAvatar(this.world.getScene());
+    this.playerController.onJump(() => {
+      if (this.wsClient && this.wsClient.isConnected) {
+        this.wsClient.sendAnimation('Jump');
+      }
+    });
+    this.playerController.onEmote((action) => {
+      if (this.wsClient && this.wsClient.isConnected) {
+        this.wsClient.sendAnimation(action);
+      }
+    });
 
     // 3. Initialize Remote Players Avatar Manager
     this.otherPlayerManager = new OtherPlayerManager(this.world.getScene());
@@ -363,6 +374,13 @@ class Application {
     // 1. Remote Player Movement (Stage 1)
     client.on('PLAYER_MOVE', (payload) => {
       this.otherPlayerManager.updatePlayer(payload);
+    });
+
+    // 1b. Remote Player Animations (Jump, Wave, etc.)
+    client.on('PLAYER_ANIMATION', (payload: any) => {
+      if (payload && payload.player_id && payload.action) {
+        this.otherPlayerManager.playAnimation(payload.player_id, payload.action);
+      }
     });
 
     // 2. Economy Balance (Stage 1 & 2)

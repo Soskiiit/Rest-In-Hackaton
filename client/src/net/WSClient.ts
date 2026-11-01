@@ -287,6 +287,13 @@ export class WSClient {
   }
 
   /**
+   * Broadcast an animation action to nearby players (e.g. 'Jump', 'Wave', 'Angry', 'FallBack').
+   */
+  public sendAnimation(action: string): void {
+    this.send('ANIMATION', { action });
+  }
+
+  /**
    * Subscribe to strongly-typed incoming packet events.
    * Returns an unsubscribe callback for easy cleanup.
    */
