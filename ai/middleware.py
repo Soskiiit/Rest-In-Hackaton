@@ -11,6 +11,7 @@ Listens on port 8000. Provides:
 - GET /tts: Query-based offline speech synthesis for audio streaming.
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -19,7 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 try:
     from ai.llm_client import (
@@ -85,7 +86,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ai.middleware")
 
 # Environment mode
-MOCK_MODE_ENV = os.getenv("MOCK_MODE", "").lower() in ("1", "true", "yes")
+MOCK_MODE_ENV = (
+    os.getenv("MOCK_MODE", "").lower() in ("1", "true", "yes")
+    or os.getenv("USE_MOCK_ENGINE", "").lower() in ("1", "true", "yes")
+)
 
 # Known NPC identifiers
 KNOWN_NPCS = {
@@ -198,15 +202,16 @@ DEFAULT_CHOICES: Dict[str, List[Choice]] = {
 # Fallback default speech tokens per NPC (100% catalog words)
 DEFAULT_TOKENS: Dict[str, List[SpeechToken]] = {
     "lao_wang": [
+        SpeechToken(zh="你好", py="nǐ hǎo", ru="здравствуйте", id="word_hello"),
         SpeechToken(zh="这是", py="Zhè shì", ru="это", id="word_this"),
         SpeechToken(zh="正宗的", py="zhèngzōng de", ru="настоящий", id="word_authentic"),
         SpeechToken(zh="玉", py="yù", ru="нефрит", id="word_jade"),
     ],
     "auntie_li": [
+        SpeechToken(zh="你好", py="nǐ hǎo", ru="здравствуйте", id="word_hello"),
         SpeechToken(zh="茶叶", py="cháyè", ru="чай", id="word_tea"),
         SpeechToken(zh="茶壶", py="cháhú", ru="чайник", id="word_teapot"),
         SpeechToken(zh="茶杯", py="chábēi", ru="чашка", id="word_cup"),
-        SpeechToken(zh="水", py="shuǐ", ru="вода", id="word_water"),
     ],
     "electronics_zhang": [
         SpeechToken(zh="这是", py="Zhè shì", ru="это", id="word_this"),
@@ -629,22 +634,7 @@ async def health():
     )
 
 
-@app.post("/dialogue", response_model=DialogueResponse)
-async def dialogue(req: DialogueRequest):
-    """
-    Primary dialogue orchestrator endpoint:
-    - Validates NPC
-    - Formats dynamic prompt context
-    - Calls llama-server or falls back to deterministic mock engine
-    - Clamps numerical parameters to Go contract bounds ([-30, 30])
-    - Enforces exactly 4 choices
-    """
-    if req.npc_id not in KNOWN_NPCS:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"NPC '{req.npc_id}' not found",
-        )
-
+async def get_dialogue_response(req: DialogueRequest) -> DialogueResponse:
     # Force mock mode if requested via environment
     if MOCK_MODE_ENV:
         return generate_mock_dialogue_clamped(req)
@@ -675,6 +665,171 @@ async def dialogue(req: DialogueRequest):
             f"Unexpected error during dialogue generation: {exc}. Falling back to mock engine."
         )
         return generate_mock_dialogue_clamped(req)
+
+
+async def stream_dialogue_generator(req: DialogueRequest):
+    """
+    Streams dialogue in 2 distinct chunks with real asynchronous separation:
+    1. 'npc_speech': Subtitles, gauges, emotion, audio (renders immediately on client)
+    2. 'choices': Interactive response options (renders choice buttons)
+    """
+    # 1. Force mock mode or test mock engine
+    if MOCK_MODE_ENV:
+        resp = generate_mock_dialogue_clamped(req)
+        part1 = {
+            "type": "npc_speech",
+            "speech_tokens": [t.model_dump() for t in resp.speech_tokens],
+            "tokens": [t.model_dump() for t in resp.speech_tokens],
+            "emotion": resp.emotion,
+            "price_new": resp.price_new,
+            "mianzi_delta": resp.mianzi_delta,
+            "aggro_delta": resp.aggro_delta,
+            "fsm_state": resp.fsm_state,
+            "audio_base64": resp.audio_base64,
+        }
+        yield (json.dumps(part1, ensure_ascii=False) + "\n").encode("utf-8")
+        await asyncio.sleep(0.8)
+        part2 = {
+            "type": "choices",
+            "choices": [c.model_dump() for c in resp.choices],
+        }
+        yield (json.dumps(part2, ensure_ascii=False) + "\n").encode("utf-8")
+        return
+
+    # 2. Dynamic prompt formatting
+    try:
+        system_prompt = format_prompt(req.npc_id, req.context)
+    except Exception as exc:
+        logger.warning(f"Prompt formatting failed for NPC '{req.npc_id}': {exc}. Using mock fallback.")
+        resp = generate_mock_dialogue_clamped(req)
+        part1 = {
+            "type": "npc_speech",
+            "speech_tokens": [t.model_dump() for t in resp.speech_tokens],
+            "tokens": [t.model_dump() for t in resp.speech_tokens],
+            "emotion": resp.emotion,
+            "price_new": resp.price_new,
+            "mianzi_delta": resp.mianzi_delta,
+            "aggro_delta": resp.aggro_delta,
+            "fsm_state": resp.fsm_state,
+            "audio_base64": resp.audio_base64,
+        }
+        yield (json.dumps(part1, ensure_ascii=False) + "\n").encode("utf-8")
+        await asyncio.sleep(0.8)
+        part2 = {
+            "type": "choices",
+            "choices": [c.model_dump() for c in resp.choices],
+        }
+        yield (json.dumps(part2, ensure_ascii=False) + "\n").encode("utf-8")
+        return
+
+    # 3. Real streaming LLM inference
+    try:
+        part1_yielded = False
+        full_result = None
+        part1_time = 0.0
+
+        async for tag, data, raw_acc in llm_client.generate_chat_completion_stream_parts(
+            system_prompt=system_prompt,
+            user_message=req.player_message,
+        ):
+            if tag == "partial" and not part1_yielded:
+                # Clamp and prepare partial speech immediately
+                clamped_partial = clamp_and_validate_response(req, data, raw_acc)
+                part1 = {
+                    "type": "npc_speech",
+                    "speech_tokens": [t.model_dump() for t in clamped_partial.speech_tokens],
+                    "tokens": [t.model_dump() for t in clamped_partial.speech_tokens],
+                    "emotion": clamped_partial.emotion,
+                    "price_new": clamped_partial.price_new,
+                    "mianzi_delta": clamped_partial.mianzi_delta,
+                    "aggro_delta": clamped_partial.aggro_delta,
+                    "fsm_state": clamped_partial.fsm_state,
+                    "audio_base64": clamped_partial.audio_base64,
+                }
+                yield (json.dumps(part1, ensure_ascii=False) + "\n").encode("utf-8")
+                part1_yielded = True
+                part1_time = asyncio.get_event_loop().time()
+            elif tag == "full":
+                full_result = clamp_and_validate_response(req, data, raw_acc)
+
+        if not part1_yielded and full_result:
+            part1 = {
+                "type": "npc_speech",
+                "speech_tokens": [t.model_dump() for t in full_result.speech_tokens],
+                "tokens": [t.model_dump() for t in full_result.speech_tokens],
+                "emotion": full_result.emotion,
+                "price_new": full_result.price_new,
+                "mianzi_delta": full_result.mianzi_delta,
+                "aggro_delta": full_result.aggro_delta,
+                "fsm_state": full_result.fsm_state,
+                "audio_base64": full_result.audio_base64,
+            }
+            yield (json.dumps(part1, ensure_ascii=False) + "\n").encode("utf-8")
+            part1_yielded = True
+            part1_time = asyncio.get_event_loop().time()
+
+        if full_result:
+            # Enforce gradual progressive loading: player needs time to read/listen to NPC speech
+            # before choice buttons appear
+            MIN_CHOICES_DELAY = 0.8
+            elapsed_since_speech = asyncio.get_event_loop().time() - part1_time
+            remaining_delay = max(0.0, MIN_CHOICES_DELAY - elapsed_since_speech)
+            if remaining_delay > 0:
+                await asyncio.sleep(remaining_delay)
+
+            part2 = {
+                "type": "choices",
+                "choices": [c.model_dump() for c in full_result.choices],
+            }
+            yield (json.dumps(part2, ensure_ascii=False) + "\n").encode("utf-8")
+
+    except Exception as exc:
+        logger.warning(f"Streaming LLM failed: {exc}. Falling back to mock engine.")
+        resp = generate_mock_dialogue_clamped(req)
+        part1 = {
+            "type": "npc_speech",
+            "speech_tokens": [t.model_dump() for t in resp.speech_tokens],
+            "tokens": [t.model_dump() for t in resp.speech_tokens],
+            "emotion": resp.emotion,
+            "price_new": resp.price_new,
+            "mianzi_delta": resp.mianzi_delta,
+            "aggro_delta": resp.aggro_delta,
+            "fsm_state": resp.fsm_state,
+            "audio_base64": resp.audio_base64,
+        }
+        yield (json.dumps(part1, ensure_ascii=False) + "\n").encode("utf-8")
+        await asyncio.sleep(0.8)
+        part2 = {
+            "type": "choices",
+            "choices": [c.model_dump() for c in resp.choices],
+        }
+        yield (json.dumps(part2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+@app.post("/dialogue", response_model=None)
+async def dialogue(req: DialogueRequest, stream: bool = Query(False)):
+    """
+    Primary dialogue orchestrator endpoint:
+    - Validates NPC
+    - Formats dynamic prompt context
+    - Calls llama-server or falls back to deterministic mock engine
+    - Clamps numerical parameters to Go contract bounds ([-30, 30])
+    - Enforces exactly 4 choices
+    - When stream=True, streams response in chunks (speech first, then choices)
+    """
+    if req.npc_id not in KNOWN_NPCS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"NPC '{req.npc_id}' not found",
+        )
+
+    if stream:
+        return StreamingResponse(
+            stream_dialogue_generator(req),
+            media_type="application/x-ndjson",
+        )
+
+    return await get_dialogue_response(req)
 
 
 # ============================================================================

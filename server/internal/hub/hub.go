@@ -93,6 +93,12 @@ type aiDone struct {
 	text     string
 	fallback bool
 }
+type aiPartial struct {
+	scene    db.Scene
+	c        *client
+	relation db.Relation
+	partial  game.PartialReply
+}
 type Hub struct {
 	scenes  map[string]*liveScene
 	cells   map[string]map[int64]*client
@@ -166,6 +172,10 @@ func (h *Hub) run() {
 				if h.clients[e.c.player.ID] == e.c {
 					h.finishDialogue(e)
 				}
+			case aiPartial:
+				if h.clients[e.c.player.ID] == e.c {
+					h.partialDialogue(e)
+				}
 			}
 		}
 	}
@@ -209,6 +219,15 @@ func (h *Hub) add(e join) {
 	c := &client{conn: e.conn, send: make(chan []byte, 256), done: make(chan struct{}), ctx: ctx, cancel: cancel, player: p, expires: e.expires, loaded: map[string]bool{}, visible: map[int64]bool{}, known: map[string]bool{}}
 	for _, w := range words {
 		c.known[w] = true
+	}
+	// Universal conversational base words for all player tourists
+	if !c.known["word_hello"] {
+		c.known["word_hello"] = true
+		words = append(words, "word_hello")
+	}
+	if !c.known["word_this"] {
+		c.known["word_this"] = true
+		words = append(words, "word_this")
 	}
 	h.clients[p.ID] = c
 	h.index(c, "")

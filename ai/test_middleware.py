@@ -2249,6 +2249,38 @@ class TestLLMClientEndpointsAndHealth(unittest.IsolatedAsyncioTestCase):
             is_healthy = await client.check_health()
             self.assertTrue(is_healthy)
 
+
+class TestDialogueStreaming(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.transport = httpx.ASGITransport(app=app)
+        self.client = httpx.AsyncClient(transport=self.transport, base_url="http://test")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_streaming_ndjson_chunks(self):
+        payload = {
+            "npc_id": "lao_wang",
+            "player_message": "老板，这块玉太贵了！",
+            "context": {
+                "price": 800,
+                "price_floor": 120,
+                "mianzi": 50,
+                "aggro": 0,
+            },
+        }
+        resp = await self.client.post("/dialogue?stream=true", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("application/x-ndjson", resp.headers.get("content-type", ""))
+        lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
+        self.assertEqual(len(lines), 2)
+        chunk1 = json.loads(lines[0])
+        chunk2 = json.loads(lines[1])
+        self.assertEqual(chunk1.get("type"), "npc_speech")
+        self.assertTrue(len(chunk1.get("speech_tokens", [])) > 0)
+        self.assertEqual(chunk2.get("type"), "choices")
+        self.assertEqual(len(chunk2.get("choices", [])), 4)
+
     async def test_06_check_health_probes_fallback_root(self):
         """When /health returns 404 and /v1/models fails but / returns 200, check_health returns True."""
         from ai.llm_client import LLMClient
@@ -2267,6 +2299,38 @@ class TestLLMClientEndpointsAndHealth(unittest.IsolatedAsyncioTestCase):
         with patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
             is_healthy = await client.check_health()
             self.assertTrue(is_healthy)
+
+
+class TestDialogueStreaming(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.transport = httpx.ASGITransport(app=app)
+        self.client = httpx.AsyncClient(transport=self.transport, base_url="http://test")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_streaming_ndjson_chunks(self):
+        payload = {
+            "npc_id": "lao_wang",
+            "player_message": "老板，这块玉太贵了！",
+            "context": {
+                "price": 800,
+                "price_floor": 120,
+                "mianzi": 50,
+                "aggro": 0,
+            },
+        }
+        resp = await self.client.post("/dialogue?stream=true", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("application/x-ndjson", resp.headers.get("content-type", ""))
+        lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
+        self.assertEqual(len(lines), 2)
+        chunk1 = json.loads(lines[0])
+        chunk2 = json.loads(lines[1])
+        self.assertEqual(chunk1.get("type"), "npc_speech")
+        self.assertTrue(len(chunk1.get("speech_tokens", [])) > 0)
+        self.assertEqual(chunk2.get("type"), "choices")
+        self.assertEqual(len(chunk2.get("choices", [])), 4)
 
 
 # ============================================================================

@@ -177,6 +177,13 @@ export class MockDomElement {
         const found = child.querySelector(selector);
         if (found) return found;
       }
+    } else if (selector.startsWith('.')) {
+      const cls = selector.slice(1);
+      for (const child of this.children) {
+        if (child.classList.contains(cls)) return child;
+        const found = child.querySelector(selector);
+        if (found) return found;
+      }
     }
     return null;
   }
@@ -865,6 +872,109 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
       }
 
       expect(fixture.interactionPrompt.classList.contains('hidden')).toBe(true);
+    });
+  });
+
+  describe('4. Chunked & Streaming Dialogue Delivery', () => {
+    it('4.1 should render partial NPC speech immediately with loading placeholder for choices', () => {
+      const dialogue = new DialogueUI(fixture.doc as any);
+      const partialSpeech: NpcSpeechPayload = {
+        npc_id: 'lao_wang',
+        tokens: [
+          { id: 'word_hello', zh: '你好', py: 'Nǐ hǎo', ru: 'Привет' },
+          { id: 'word_friend', zh: '朋友', py: 'péngyǒu', ru: 'друг' },
+        ],
+        emotion: 'HAPPY',
+        mianzi: 65,
+        aggro: 10,
+        is_partial: true,
+      };
+
+      const knownWords = new Set(['word_hello']);
+      dialogue.renderPartialSpeech(partialSpeech, knownWords);
+
+      expect(dialogue.isOpen()).toBe(true);
+      expect(fixture.npcName.textContent).toContain('ЛАО ВАН');
+      expect(fixture.lineOriginal.textContent).toContain('你好 (Nǐ hǎo)');
+      // Both original phrase and semi-translation (with unmasked known word) appear simultaneously in partial chunk!
+      expect(fixture.lineTranslated.innerHTML).toContain('Привет');
+      expect(fixture.lineTranslated.innerHTML).toContain('<span class="masked-token">[???]</span>');
+      expect(fixture.mianziVal.textContent).toBe('65%');
+      expect(fixture.aggroVal.textContent).toBe('10%');
+
+      // Choices container contains loading indicator instead of choice buttons
+      const loader = fixture.choices.querySelector('.dialogue-choices-loading');
+      expect(loader).not.toBeNull();
+      expect(loader!.textContent).toContain('Собеседник формулирует варианты');
+    });
+
+    it('4.2 should render interactive choices when choices chunk arrives via setChoices', () => {
+      const dialogue = new DialogueUI(fixture.doc as any);
+      const partialSpeech: NpcSpeechPayload = {
+        npc_id: 'lao_wang',
+        tokens: [{ id: 'word_hello', zh: '你好', py: 'Nǐ hǎo', ru: 'Привет' }],
+        mianzi: 50,
+        aggro: 0,
+        is_partial: true,
+      };
+
+      dialogue.renderPartialSpeech(partialSpeech);
+      expect(fixture.choices.querySelector('.dialogue-choices-loading')).not.toBeNull();
+
+      // Chunk 2 arrives
+      dialogue.setChoices([
+        { id: 1, text_zh: '老板好', text_ru: 'Привет, босс' },
+        { id: 2, text_zh: '多少钱', text_ru: 'Сколько стоит' },
+      ], 'turn_123');
+
+      // Loading indicator is replaced by buttons
+      expect(fixture.choices.querySelector('.dialogue-choices-loading')).toBeNull();
+      const buttons = fixture.choices.querySelectorAll('.choice-btn');
+      expect(buttons.length).toBe(2);
+      expect(buttons[0].textContent).toContain('老板好');
+    });
+
+    it('4.3 should visually highlight selected choice and disable buttons immediately on click', () => {
+      const dialogue = new DialogueUI(fixture.doc as any);
+      const onChoice = vi.fn();
+      dialogue.open(MOCK_SPEECH_GREETING, onChoice);
+
+      const buttons = fixture.choices.querySelectorAll('.choice-btn');
+      expect(buttons.length).toBe(4);
+
+      // User clicks choice 2
+      buttons[1].dispatchEvent({ type: 'click' });
+
+      expect(onChoice).toHaveBeenCalledWith(2);
+      expect(buttons[1].classList.contains('selected')).toBe(true);
+      expect(buttons[0].classList.contains('disabled')).toBe(true);
+      expect(buttons[1].classList.contains('disabled')).toBe(true);
+    });
+
+    it('4.4 should handle mock streaming packets via WSClient and MockServer', () => {
+      const client = new WSClient({ mock: true });
+      let partialReceived: NpcSpeechPayload | null = null;
+      let choicesReceived: any = null;
+      let fullReceived: NpcSpeechPayload | null = null;
+
+      client.on('NPC_SPEECH_PARTIAL', (p) => { partialReceived = p; });
+      client.on('DIALOGUE_CHOICES', (c) => { choicesReceived = c; });
+      client.on('NPC_SPEECH', (s) => { fullReceived = s; });
+
+      client.connect();
+      client.send('DIALOGUE', { npc_id: 'lao_wang', choice_id: 1 });
+
+      expect(partialReceived).not.toBeNull();
+      expect(partialReceived!.npc_id).toBe('lao_wang');
+      expect(partialReceived!.choices?.length).toBe(0);
+
+      expect(choicesReceived).not.toBeNull();
+      expect(choicesReceived.choices?.length).toBeGreaterThan(0);
+
+      expect(fullReceived).not.toBeNull();
+      expect(fullReceived!.choices?.length).toBeGreaterThan(0);
+
+      client.disconnect();
     });
   });
 });

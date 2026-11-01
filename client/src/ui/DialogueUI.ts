@@ -18,7 +18,7 @@
  *    - refreshSubtitles(knownWords): dynamic unmasking of [???] in active dialogue without restart.
  */
 
-import { NpcSpeechPayload } from '../net/types';
+import { NpcSpeechPayload, Choice } from '../net/types';
 
 export type ChoiceCallback = (choiceId: number) => void;
 export type CloseCallback = () => void;
@@ -42,6 +42,15 @@ export interface IDialogueUI {
   updateState(mianzi: number, aggro: number): void;
   isOpen(): boolean;
   dispose(): void;
+  renderPartialSpeech?(
+    speech: NpcSpeechPayload,
+    knownWords?: Set<string>,
+    onChoice?: ChoiceCallback,
+    onClose?: CloseCallback
+  ): void;
+  setChoices?(choices: Choice[], turnId?: string): void;
+  setPending?(isPending: boolean, message?: string): void;
+  isPending?(): boolean;
 }
 
 export const NPC_NAMES: Record<string, string> = {
@@ -75,6 +84,8 @@ export class DialogueUI implements IDialogueUI {
   private isListeningKeys = false;
   private currentMianzi = 50;
   private currentAggro = 0;
+  private isPendingChoice = false;
+  private selectedChoiceId: number | null = null;
 
   // Bound Event Listeners
   private boundKeyDownHandler: (e: KeyboardEvent | any) => void;
@@ -183,6 +194,9 @@ export class DialogueUI implements IDialogueUI {
       if (this.defaultOnClose) this.onCloseCallback = this.defaultOnClose;
     }
 
+    this.isPendingChoice = false;
+    this.selectedChoiceId = null;
+
     // 1. Update NPC Name
     if (this.npcNameEl) {
       const displayName = NPC_NAMES[speech.npc_id] || speech.npc_id.toUpperCase();
@@ -195,8 +209,12 @@ export class DialogueUI implements IDialogueUI {
     // 3. Render 2-Line Subtitles
     this.renderSubtitles();
 
-    // 4. Render Choice Buttons
-    this.renderChoices();
+    // 4. Render Choice Buttons (or loading placeholder if choices arrive in a separate chunk)
+    if (Array.isArray(speech.choices) && speech.choices.length > 0) {
+      this.renderChoices();
+    } else {
+      this.renderChoicesLoading('Собеседник обдумывает варианты ответа...');
+    }
 
     // 5. Reveal Overlay
     if (this.overlayEl) {
@@ -206,6 +224,81 @@ export class DialogueUI implements IDialogueUI {
 
     // 6. Attach Keyboard Listener
     this.attachKeyboardListener();
+  }
+
+  /**
+   * Updates dialogue with partial NPC speech (subtitles, gauges, audio)
+   * while displaying an interactive loading indicator in place of choices.
+   * Synchronously unmasks learned Russian words in Line 2 using knownWords.
+   */
+  public renderPartialSpeech(
+    speech: NpcSpeechPayload,
+    knownWords?: Set<string>,
+    onChoice?: ChoiceCallback,
+    onClose?: CloseCallback
+  ): void {
+    if (knownWords instanceof Set) {
+      this.knownWords = new Set(knownWords);
+    }
+    if (typeof onChoice === 'function') {
+      this.onChoiceCallback = onChoice;
+    }
+    if (typeof onClose === 'function') {
+      this.onCloseCallback = onClose;
+    }
+
+    this.currentSpeech = {
+      ...(this.currentSpeech || {}),
+      ...speech,
+      choices: [],
+    };
+    this.isPendingChoice = true;
+
+    if (this.npcNameEl) {
+      const displayName = NPC_NAMES[speech.npc_id] || speech.npc_id.toUpperCase();
+      this.npcNameEl.textContent = displayName;
+    }
+
+    this.updateGauges(speech.mianzi ?? this.currentMianzi, speech.aggro ?? this.currentAggro);
+    this.renderSubtitles();
+    this.renderChoicesLoading('Собеседник формулирует варианты ответа...');
+
+    if (this.overlayEl) {
+      this.overlayEl.classList.remove('hidden');
+    }
+    this.isOpenState = true;
+    this.attachKeyboardListener();
+  }
+
+  /**
+   * Sets choices when they arrive (part 2) and renders interactive choice buttons.
+   */
+  public setChoices(choices: Choice[], turnId?: string): void {
+    this.isPendingChoice = false;
+    this.selectedChoiceId = null;
+    if (this.currentSpeech) {
+      this.currentSpeech.choices = choices;
+      if (turnId) {
+        this.currentSpeech.turn_id = turnId;
+      }
+    }
+    this.renderChoices();
+  }
+
+  /**
+   * Updates pending state of choices (e.g. while awaiting server response).
+   */
+  public setPending(isPending: boolean, message?: string): void {
+    this.isPendingChoice = isPending;
+    if (isPending) {
+      this.applyPendingChoiceStyles(message);
+    } else {
+      this.renderChoices();
+    }
+  }
+
+  public isPending(): boolean {
+    return this.isPendingChoice;
   }
 
   /**
@@ -290,13 +383,19 @@ export class DialogueUI implements IDialogueUI {
   /**
    * Renders Line 1 (Chinese + Pinyin) and Line 2 (Russian with [???] token masking).
    * Punctuation tokens are preserved and not masked.
+   * Both lines update synchronously in the same frame for immediate feedback.
    */
   private renderSubtitles(): void {
-    if (!this.currentSpeech || !Array.isArray(this.currentSpeech.tokens)) {
+    if (!this.currentSpeech) {
       return;
     }
 
-    const tokens = this.currentSpeech.tokens;
+    const rawTokens = this.currentSpeech.tokens || (this.currentSpeech as any).speech_tokens;
+    if (!rawTokens || !Array.isArray(rawTokens)) {
+      return;
+    }
+
+    const tokens = rawTokens;
 
     // Line 1: Chinese + Pinyin
     // Format: "你好 (Nǐ hǎo) 朋友 (péngyou)"
@@ -313,18 +412,26 @@ export class DialogueUI implements IDialogueUI {
     const line2Parts: string[] = [];
 
     for (const t of tokens) {
-      const isExplicitMask = t.ru === '[???]';
+      const isUniversalStarter = t.id === 'word_this' || t.id === 'word_hello';
       const isPunctuation =
         !t.id ||
         t.id.startsWith('punct') ||
         /^[\p{P}\p{S}]+$/u.test(t.zh);
 
-      const isUnlearned = !isPunctuation && Boolean(t.id && !this.knownWords.has(t.id));
+      const isExplicitMask = t.ru === '[???]';
+      const isUnlearned =
+        !isPunctuation &&
+        !isUniversalStarter &&
+        (isExplicitMask || Boolean(t.id && !this.knownWords.has(t.id)));
 
-      if (isExplicitMask || isUnlearned) {
+      if (isUnlearned) {
         line2Parts.push('<span class="masked-token">[???]</span>');
       } else {
-        line2Parts.push(this.escapeHtml(t.ru));
+        const textToRender =
+          isUniversalStarter && isExplicitMask
+            ? (t.id === 'word_this' ? 'это' : 'Привет')
+            : t.ru;
+        line2Parts.push(this.escapeHtml(textToRender));
       }
     }
 
@@ -391,11 +498,77 @@ export class DialogueUI implements IDialogueUI {
   }
 
   /**
-   * Executes choice selection callback.
+   * Executes choice selection callback with immediate visual feedback.
    */
   public selectChoice(choiceId: number): void {
+    this.selectedChoiceId = choiceId;
+    this.applyPendingChoiceStyles();
+
     if (this.onChoiceCallback) {
       this.onChoiceCallback(choiceId);
+    }
+  }
+
+  /**
+   * Visually disables all choices and highlights the selected button
+   * without appending extra loading blocks to keep layout perfectly stable.
+   */
+  private applyPendingChoiceStyles(_message?: string): void {
+    if (!this.choicesContainerEl) return;
+
+    const btns = this.choicesContainerEl.querySelectorAll?.('.choice-btn') ?? [];
+
+    for (let i = 0; i < btns.length; i++) {
+      const b = btns[i] as HTMLButtonElement;
+      b.classList.add('disabled');
+      b.setAttribute('disabled', 'true');
+      const choiceAttr = b.getAttribute?.('data-choice-id') || b.dataset?.choice;
+      if (this.selectedChoiceId !== null && choiceAttr === String(this.selectedChoiceId)) {
+        b.classList.add('selected');
+      }
+    }
+  }
+
+  /**
+   * Renders 4 loading choice buttons inside #dialogue-choices to maintain
+   * a fixed 2x2 grid layout and prevent any jumping or shifting of the dialogue overlay.
+   */
+  private renderChoicesLoading(message: string = 'Собеседник формулирует варианты ответа...'): void {
+    if (!this.choicesContainerEl) return;
+    this.choicesContainerEl.innerHTML = '';
+    const doc = this.docRef ?? (typeof document !== 'undefined' ? document : (globalThis as any).document);
+    if (!doc) return;
+
+    for (let index = 0; index < 4; index++) {
+      const btn = doc.createElement('button');
+      btn.className = 'choice-btn loading disabled dialogue-choices-loading';
+      btn.setAttribute('disabled', 'true');
+
+      const numBadge = doc.createElement('span');
+      numBadge.className = 'choice-num';
+      numBadge.textContent = `[${index + 1}]`;
+
+      const textSpan = doc.createElement('span');
+      textSpan.className = 'choice-text';
+
+      const dotsWrap = doc.createElement('span');
+      dotsWrap.className = 'loading-dots';
+      for (let d = 0; d < 3; d++) {
+        const dot = doc.createElement('span');
+        dot.className = 'loading-dot';
+        dotsWrap.appendChild(dot);
+      }
+
+      const msgSpan = doc.createElement('span');
+      msgSpan.className = 'loading-text';
+      msgSpan.textContent = message;
+
+      textSpan.appendChild(dotsWrap);
+      textSpan.appendChild(msgSpan);
+
+      btn.appendChild(numBadge);
+      btn.appendChild(textSpan);
+      this.choicesContainerEl.appendChild(btn);
     }
   }
 
