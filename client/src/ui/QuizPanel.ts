@@ -14,7 +14,7 @@
 export interface QuizOption {
   id: number;
   text: string;
-  correct?: boolean;
+  correct: boolean;
 }
 
 export interface QuizItemData {
@@ -272,27 +272,11 @@ export class QuizPanel implements IQuizPanel {
    * - Shows visual feedback (.correct or .wrong).
    * - Invokes onAnswer callback on correct response.
    */
-  public showServerResult(correct: boolean): void {
-    this.hasAnsweredCorrectly = correct;
-    if (this.feedbackEl) {
-      this.feedbackEl.classList.remove('hidden', 'correct', 'wrong');
-      this.feedbackEl.classList.add(correct ? 'correct' : 'wrong');
-      this.feedbackEl.textContent = correct ? 'Правильно! Слово изучено.' : 'Неверно. Закройте окно и осмотрите предмет снова.';
-    }
-    this.optionsContainerEl?.querySelectorAll('button').forEach((button) => { button.disabled = true; });
-  }
-
   public selectOption(optionId: number): void {
     if (!this.isOpenState || !this.currentItemData) return;
 
     const opt = this.currentItemData.options.find((o) => o.id === optionId);
     if (!opt) return;
-
-    // Online quizzes are checked by Go; no correct answer travels to the browser.
-    if (opt.correct === undefined) {
-      this.onAnswerCallback?.(opt.id, this.currentItemData.wordId);
-      return;
-    }
 
     // Find corresponding button DOM element
     let targetBtn: HTMLElement | null = null;

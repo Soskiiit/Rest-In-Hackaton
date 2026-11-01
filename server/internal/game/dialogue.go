@@ -1,6 +1,7 @@
 package game
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -28,7 +29,19 @@ type Reply struct {
 	AggroDelta  int      `json:"aggro_delta"`
 	State       string   `json:"fsm_state"`
 	Choices     []Choice `json:"choices"`
+	AudioBase64 string   `json:"audio_base64,omitempty"`
 }
+
+type PartialReply struct {
+	Tokens      []Token `json:"speech_tokens"`
+	Emotion     string  `json:"emotion"`
+	Price       int     `json:"price_new"`
+	MianziDelta int     `json:"mianzi_delta"`
+	AggroDelta  int     `json:"aggro_delta"`
+	State       string  `json:"fsm_state"`
+	AudioBase64 string  `json:"audio_base64,omitempty"`
+}
+
 type AI struct {
 	URL     string
 	Client  *http.Client
@@ -36,12 +49,16 @@ type AI struct {
 }
 
 func NewAI(url string, c *Catalog) *AI {
-	return &AI{URL: strings.TrimRight(url, "/"), Client: &http.Client{Timeout: 15 * time.Second}, Catalog: c}
+	return &AI{URL: strings.TrimRight(url, "/"), Client: &http.Client{Timeout: 45 * time.Second}, Catalog: c}
 }
 func (a *AI) Request(ctx context.Context, r db.Relation, text string) (Reply, error) {
 	return a.RequestScene(ctx, r, text, nil)
 }
 func (a *AI) RequestScene(ctx context.Context, r db.Relation, text string, sceneHistory []db.Message) (Reply, error) {
+	return a.RequestSceneStream(ctx, r, text, sceneHistory, nil)
+}
+
+func (a *AI) RequestSceneStream(ctx context.Context, r db.Relation, text string, sceneHistory []db.Message, onPartial func(PartialReply)) (Reply, error) {
 	body := map[string]any{"npc_id": r.NPCID, "player_message": text, "context": map[string]any{
 		"price": r.Price, "price_floor": r.Floor, "mianzi": r.Mianzi, "aggro": r.Aggro, "history": r.History, "scene_history": sceneHistory, "npc_kind": a.Catalog.NPCs[r.NPCID].Kind,
 	}}
@@ -49,11 +66,18 @@ func (a *AI) RequestScene(ctx context.Context, r db.Relation, text string, scene
 	if err != nil {
 		return Reply{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", a.URL+"/dialogue", bytes.NewReader(data))
+	targetURL := a.URL + "/dialogue"
+	if onPartial != nil {
+		targetURL += "?stream=true"
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(data))
 	if err != nil {
 		return Reply{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if onPartial != nil {
+		req.Header.Set("Accept", "application/x-ndjson, application/json")
+	}
 	res, err := a.Client.Do(req)
 	if err != nil {
 		return Reply{}, err
@@ -62,28 +86,111 @@ func (a *AI) RequestScene(ctx context.Context, r db.Relation, text string, scene
 	if res.StatusCode != 200 {
 		return Reply{}, fmt.Errorf("AI HTTP %d", res.StatusCode)
 	}
-	b, err := io.ReadAll(io.LimitReader(res.Body, 65537))
+
+	contentType := res.Header.Get("Content-Type")
+	if strings.Contains(contentType, "ndjson") {
+		scanner := bufio.NewScanner(res.Body)
+		buf := make([]byte, 64*1024)
+		scanner.Buffer(buf, 2*1024*1024)
+
+		var partial PartialReply
+		var gotPartial bool
+		var finalReply Reply
+
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if len(bytes.TrimSpace(line)) == 0 {
+				continue
+			}
+			var header struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(line, &header); err != nil {
+				continue
+			}
+			if header.Type == "npc_speech" {
+				var p struct {
+					Tokens      []Token `json:"speech_tokens"`
+					Emotion     string  `json:"emotion"`
+					Price       int     `json:"price_new"`
+					MianziDelta int     `json:"mianzi_delta"`
+					AggroDelta  int     `json:"aggro_delta"`
+					State       string  `json:"fsm_state"`
+					AudioBase64 string  `json:"audio_base64"`
+				}
+				if err := json.Unmarshal(line, &p); err == nil {
+					partial = PartialReply{
+						Tokens:      p.Tokens,
+						Emotion:     p.Emotion,
+						Price:       p.Price,
+						MianziDelta: p.MianziDelta,
+						AggroDelta:  p.AggroDelta,
+						State:       p.State,
+						AudioBase64: p.AudioBase64,
+					}
+					gotPartial = true
+					if onPartial != nil {
+						onPartial(partial)
+					}
+				}
+			} else if header.Type == "choices" {
+				var c struct {
+					Choices []Choice `json:"choices"`
+				}
+				if err := json.Unmarshal(line, &c); err == nil {
+					finalReply = Reply{
+						Tokens:      partial.Tokens,
+						Emotion:     partial.Emotion,
+						Price:       partial.Price,
+						MianziDelta: partial.MianziDelta,
+						AggroDelta:  partial.AggroDelta,
+						State:       partial.State,
+						Choices:     c.Choices,
+						AudioBase64: partial.AudioBase64,
+					}
+					if err = a.validate(finalReply, r); err != nil {
+						return Reply{}, err
+					}
+					return finalReply, nil
+				}
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			return Reply{}, err
+		}
+		if gotPartial && len(finalReply.Choices) > 0 {
+			if err = a.validate(finalReply, r); err != nil {
+				return Reply{}, err
+			}
+			return finalReply, nil
+		}
+	}
+
+	const maxAIResponseSize = 2 * 1024 * 1024 // 2 MiB
+	b, err := io.ReadAll(io.LimitReader(res.Body, maxAIResponseSize+1))
 	if err != nil {
 		return Reply{}, err
 	}
-	if len(b) > 65536 {
+	if len(b) > maxAIResponseSize {
 		return Reply{}, fmt.Errorf("AI response too large")
 	}
 	var envelope struct {
-		Parsed json.RawMessage `json:"parsed"`
+		Parsed      json.RawMessage `json:"parsed"`
+		AudioBase64 *string         `json:"audio_base64"`
 	}
 	if err = json.Unmarshal(b, &envelope); err != nil {
 		return Reply{}, err
 	}
 	// Pointers distinguish valid zero deltas from missing model fields.
 	var fields struct {
-		Tokens  *[]Token  `json:"speech_tokens"`
-		Emotion *string   `json:"emotion"`
-		Price   *int      `json:"price_new"`
-		Mianzi  *int      `json:"mianzi_delta"`
-		Aggro   *int      `json:"aggro_delta"`
-		State   *string   `json:"fsm_state"`
-		Choices *[]Choice `json:"choices"`
+		Tokens      *[]Token  `json:"speech_tokens"`
+		Emotion     *string   `json:"emotion"`
+		Price       *int      `json:"price_new"`
+		Mianzi      *int      `json:"mianzi_delta"`
+		Aggro       *int      `json:"aggro_delta"`
+		State       *string   `json:"fsm_state"`
+		Choices     *[]Choice `json:"choices"`
+		AudioBase64 *string   `json:"audio_base64"`
 	}
 	if err = json.Unmarshal(envelope.Parsed, &fields); err != nil {
 		return Reply{}, err
@@ -91,7 +198,34 @@ func (a *AI) RequestScene(ctx context.Context, r db.Relation, text string, scene
 	if fields.Tokens == nil || fields.Emotion == nil || fields.Price == nil || fields.Mianzi == nil || fields.Aggro == nil || fields.State == nil || fields.Choices == nil {
 		return Reply{}, fmt.Errorf("missing AI fields")
 	}
-	reply := Reply{*fields.Tokens, *fields.Emotion, *fields.Price, *fields.Mianzi, *fields.Aggro, *fields.State, *fields.Choices}
+	audio := ""
+	if fields.AudioBase64 != nil {
+		audio = *fields.AudioBase64
+	} else if envelope.AudioBase64 != nil {
+		audio = *envelope.AudioBase64
+	}
+	reply := Reply{
+		Tokens:      *fields.Tokens,
+		Emotion:     *fields.Emotion,
+		Price:       *fields.Price,
+		MianziDelta: *fields.Mianzi,
+		AggroDelta:  *fields.Aggro,
+		State:       *fields.State,
+		Choices:     *fields.Choices,
+		AudioBase64: audio,
+	}
+	if onPartial != nil {
+		onPartial(PartialReply{
+			Tokens:      reply.Tokens,
+			Emotion:     reply.Emotion,
+			Price:       reply.Price,
+			MianziDelta: reply.MianziDelta,
+			AggroDelta:  reply.AggroDelta,
+			State:       reply.State,
+			AudioBase64: reply.AudioBase64,
+		})
+		time.Sleep(800 * time.Millisecond)
+	}
 	if err = a.validate(reply, r); err != nil {
 		return Reply{}, err
 	}
@@ -152,6 +286,9 @@ func Choices() []Choice {
 		{3, "这是假货！", "Zhè shì jiǎhuò!", "Это подделка!", "provoke"},
 		{4, "对不起，我再看看。", "Duìbuqǐ, wǒ zài kànkan.", "Извините, я ещё посмотрю.", "leave"},
 	}
+}
+func Clamp(v, lo, hi int) int {
+	return clamp(v, lo, hi)
 }
 func clamp(v, lo, hi int) int {
 	if v < lo {

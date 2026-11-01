@@ -97,6 +97,10 @@ func send(t *testing.T, c *websocket.Conn, kind string, payload any) {
 		t.Fatal(err)
 	}
 }
+func move(t *testing.T, c *websocket.Conn, x, z, rotation float64) {
+	t.Helper()
+	send(t, c, "MOVE", map[string]any{"x": x, "z": z, "rotation": rotation})
+}
 func until(t *testing.T, c *websocket.Conn, kind string) json.RawMessage {
 	t.Helper()
 	c.SetReadDeadline(time.Now().Add(4 * time.Second))
@@ -212,6 +216,10 @@ func TestMultiplayerAIQuizAndRestart(t *testing.T) {
 	until(t, b, "WORLD_STATS")
 	until(t, a, "PLAYER_JOIN")
 	until(t, b, "PLAYER_JOIN")
+	move(t, a, 100, 124, 0)
+	move(t, b, 101, 124, 0)
+	until(t, a, "PLAYER_MOVE")
+	until(t, b, "PLAYER_MOVE")
 	send(t, a, "DIALOGUE", map[string]any{"npc_id": "lao_wang"})
 	until(t, a, "DIALOGUE_PENDING")
 	select {
@@ -220,7 +228,7 @@ func TestMultiplayerAIQuizAndRestart(t *testing.T) {
 		t.Fatal("AI did not start")
 	}
 	// Neither live movement nor a database connection may be held while waiting for inference.
-	send(t, b, "MOVE", map[string]any{"x": 111, "z": 110, "rotation": 1})
+	move(t, b, 104, 124, 1)
 	until(t, a, "PLAYER_MOVE")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -279,7 +287,7 @@ func TestMultiplayerAIQuizAndRestart(t *testing.T) {
 	// Crossing chunks must unload before loading, including transitions far away.
 	send(t, a, "MOVE", map[string]any{"x": 151, "z": 110, "rotation": 2})
 	loaded := map[string]bool{}
-	for _, id := range []string{"4_4", "4_5", "4_6", "5_4", "5_5", "5_6", "6_4", "6_5", "6_6"} {
+	for _, id := range []string{"4_5", "5_5", "6_5", "4_6", "5_6", "6_6", "4_7", "5_7", "6_7"} {
 		loaded[id] = true
 	}
 	sawUnload := false
@@ -354,6 +362,7 @@ func TestUnavailableAIUsesFallback(t *testing.T) {
 	c := dial(t, f, account(t, f, "alice", "business"))
 	until(t, c, "WELCOME")
 	until(t, c, "WORLD_STATS")
+	move(t, c, 100, 124, 0)
 	send(t, c, "DIALOGUE", map[string]any{"npc_id": "lao_wang"})
 	var s hub.Speech
 	json.Unmarshal(until(t, c, "NPC_SPEECH"), &s)
@@ -402,17 +411,21 @@ func TestInspectableItemArrivesInAOI(t *testing.T) {
 	f := start(t, testdb.New(t), "http://127.0.0.1:1")
 	c := dial(t, f, account(t, f, "alice", "business"))
 	until(t, c, "WELCOME")
-	raw := until(t, c, "CHUNK_LOAD")
 	var chunk game.Chunk
-	if err := json.Unmarshal(raw, &chunk); err != nil {
-		t.Fatal(err)
+	for chunk.ID != "5_6" {
+		raw := until(t, c, "CHUNK_LOAD")
+		if err := json.Unmarshal(raw, &chunk); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if chunk.ID != "5_5" || len(chunk.Items) != 2 || chunk.Items[0].ID != "teapot" || chunk.Items[0].X != 12 || chunk.Items[0].Z != 10 {
-		t.Fatalf("inspectable item was not delivered to client: %s", raw)
+	if len(chunk.Items) != 2 || chunk.Items[0].ID != "teapot" || chunk.Items[0].X != 1 || chunk.Items[0].Z != 4 {
+		t.Fatalf("inspectable item was not delivered to client: %+v", chunk.Items)
 	}
+	raw, _ := json.Marshal(chunk)
 	if bytes.Contains(raw, []byte("answer_id")) {
 		t.Fatal("world leaked quiz answer")
 	}
+	move(t, c, 100, 124, 0)
 	send(t, c, "INSPECT", map[string]any{"item_id": chunk.Items[0].ID})
 	var quiz struct {
 		Options []game.Option `json:"options"`

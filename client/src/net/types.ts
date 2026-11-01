@@ -8,7 +8,10 @@ export type PacketType =
   | 'PLAYER_MOVE'
   | 'PLAYER_LEAVE'
   | 'DIALOGUE'
+  | 'DIALOGUE_PENDING'
+  | 'DIALOGUE_CHOICES'
   | 'NPC_SPEECH'
+  | 'NPC_SPEECH_PARTIAL'
   | 'NPC_STATE'
   | 'INSPECT'
   | 'WORD_LEARNED'
@@ -40,20 +43,19 @@ export interface MovePayload {
 
 export interface DialoguePayload {
   npc_id: string;
+  // Omitted when starting/reopening a dialogue: the server then generates or
+  // resends the current turn. Must be paired with turn_id when choosing.
   choice_id?: number;
   turn_id?: string;
 }
 
 export interface InspectPayload {
   item_id: string;
-  answer_id?: number;
-  quiz_id?: string;
+  answer_id: number;
 }
 
 export interface CalculatorPayload {
   npc_id: string;
-  item_id: string;
-  trade_id: string;
   amount: number;
 }
 
@@ -81,27 +83,39 @@ export interface Token {
 
 export interface Choice {
   id: number;
-  text_zh?: string;
+  // Server shape (see server/internal/game Choice).
   zh?: string;
-  ru?: string;
   py?: string;
+  ru?: string;
+  // Legacy/mock shape kept for MockServer and fixtures.
+  text_zh?: string;
   text_ru?: string;
   text_py?: string;
-  type?: string;
+  type?: 'polite' | 'haggle' | 'provoke' | 'leave' | 'bluff' | 'order' | 'documents' | 'bribe' | 'directions';
 }
 
 export interface NpcSpeechPayload {
-  turn_id?: string;
-  offers?: string[];
-  fallback?: boolean;
-  scene_version?: number;
   npc_id: string;
   tokens: Token[];
-  choices: Choice[];
+  choices?: Choice[];
   emotion?: string; // "NEUTRAL" | "HAPPY" | "ANGRY" | "FURIOUS"
   mianzi: number;  // Respect meter: 0..100
   aggro: number;   // Aggro / Rage meter: 0..100
   price?: number;
+  audio_base64?: string; // Base64-encoded WAV audio from AI TTS
+  turn_id?: string;      // Turn token for STALE_CHOICE guard
+  is_partial?: boolean;
+}
+
+export interface DialoguePendingPayload {
+  npc_id: string;
+  player_id?: number;
+}
+
+export interface DialogueChoicesPayload {
+  npc_id: string;
+  turn_id: string;
+  choices: Choice[];
 }
 
 export interface NpcStatePayload {
@@ -128,9 +142,6 @@ export interface ChunkLoadPayload {
   objects?: any[];
   lanterns?: Array<{ x: number; y: number; z: number }>;
   npc_id?: string;
-  buildings?: Array<{ x: number; z: number }>;
-  npcs?: Array<{ npc_id: string; x: number; y?: number; z: number }>;
-  items?: Array<{ item_id: string; x: number; y?: number; z: number }>;
 }
 
 export interface ChunkUnloadPayload {
@@ -216,33 +227,4 @@ export interface WSClientConfig {
   maxReconnectAttempts?: number;
   moveThrottleMs?: number; // default: 50ms (~20Hz)
   moveEpsilon?: number;    // default: 0.001 units
-}
-
-export interface QuizPayload {
-  quiz_id: string;
-  item_id: string;
-  audio_text: string;
-  options: Array<{ id: number; zh: string; py: string; ru: string }>;
-}
-export interface TradeOpenPayload {
-  trade_id: string;
-  npc_id: string;
-  item_id: string;
-  price: number;
-  balance: number;
-  expires_at: string;
-  scene_version: number;
-}
-export interface PacketMap {
-  CHAT: { player_id?: number; login?: string; text: string };
-  QUIZ: QuizPayload;
-  QUIZ_RESULT: { item_id: string; correct: boolean; new?: boolean };
-  TRADE_START: { npc_id: string; item_id: string };
-  TRADE_OPEN: TradeOpenPayload;
-  TRADE_RESULT: { status: string; receipt?: { item_id: string; amount: number }; reason?: string };
-  INVENTORY: { items: Array<{ item_id: string; price_paid: number }> };
-  WORLD_STATS: { loaded_chunks: number; total_chunks: number; data_percent: number; chunk_percent: number };
-  NPC_LEAVE: { npc_id: string };
-  DIALOGUE_PENDING: { npc_id: string; player_id: number };
-  DIALOGUE_DONE: { npc_id: string; status: string; scene_version: number };
 }

@@ -6,7 +6,7 @@
  * 2. Verification that cache % strictly never exceeds 10% under any player movement (100-cell sweep, continuous & boundary).
  * 3. Deep GPU disposal spy verification: geometry.dispose(), material.dispose(), texture.dispose() when chunks leave AoI.
  * 4. Temporal execution order verification: Unload First, Load Second (preventing intermediate memory spikes).
- * 5. ChunkBuilder procedural generation & Landmark Chunk 5_5 inspection.
+ * 5. ChunkBuilder procedural generation & standalone central pavilion inspection.
  * 6. HUD integration & badge visual states ('ЛИМИТ 10% OK' vs 'ПРЕВЫШЕН ЛИМИТ!').
  */
 
@@ -411,13 +411,13 @@ describe('Milestone M2: ChunkStreamer & Memory Invariant Test Suite', () => {
   });
 
   // ==========================================================================
-  // 5. ChunkBuilder Procedural Generation & Landmark Chunk 5_5
+  // 5. ChunkBuilder Procedural Generation & Central Pavilion
   // ==========================================================================
   describe('5. ChunkBuilder Procedural Stalls & Lao Wang Landmark Pavilion', () => {
     it('should build procedural stalls and ground plane for generic chunks', () => {
       const chunk = ChunkBuilder.buildChunk(1, 2);
       expect(chunk.name).toBe('chunk_1_2');
-      expect(chunk.userData.isLandmark).toBe(false);
+      expect(chunk.userData.isLandmark).toBeUndefined();
       expect(chunk.position.x).toBe(20);
       expect(chunk.position.z).toBe(40);
 
@@ -432,29 +432,35 @@ describe('Milestone M2: ChunkStreamer & Memory Invariant Test Suite', () => {
       disposeHierarchy(chunk);
     });
 
-    it('should build Lao Wang landmark antique pavilion for landmark chunk 5_5', () => {
+    it('should keep chunk 5_5 procedural so the central pavilion is not duplicated', () => {
       const chunk = ChunkBuilder.buildChunk(5, 5);
       expect(chunk.name).toBe('chunk_5_5');
-      expect(chunk.userData.isLandmark).toBe(true);
-      expect(chunk.userData.npcId).toBe('lao_wang');
+      expect(chunk.userData.isLandmark).toBeUndefined();
+      expect(chunk.userData.npcId).toBeUndefined();
+      expect(chunk.getObjectByName('lao_wang_landmark')).toBeUndefined();
+      expect(chunk.getObjectByName('npc_lao_wang')).toBeUndefined();
+      expect(chunk.getObjectByName('stalls_group')).toBeDefined();
 
-      // Landmark components
-      const landmark = chunk.getObjectByName('lao_wang_landmark');
-      expect(landmark).toBeDefined();
+      disposeHierarchy(chunk);
+    });
+
+    it('should build the single Lao Wang landmark pavilion for the central plaza', () => {
+      const landmark = ChunkBuilder.buildLaoWangLandmark(undefined, true);
+      expect(landmark.name).toBe('lao_wang_landmark');
 
       // Lao Wang NPC avatar
-      const npc = chunk.getObjectByName('npc_lao_wang');
+      const npc = landmark.getObjectByName('npc_lao_wang');
       expect(npc).toBeDefined();
       expect(npc!.userData.npcId).toBe('lao_wang');
       expect(npc!.userData.isNpc).toBe(true);
 
       // Inspectable antique teapot (Milestone M4)
-      const teapot = chunk.getObjectByName('item_teapot');
+      const teapot = landmark.getObjectByName('item_teapot');
       expect(teapot).toBeDefined();
       expect(teapot!.userData.itemId).toBe('teapot');
       expect(teapot!.userData.inspectable).toBe(true);
 
-      disposeHierarchy(chunk);
+      disposeHierarchy(landmark);
     });
   });
 

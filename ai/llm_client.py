@@ -18,16 +18,96 @@ import httpx
 
 logger = logging.getLogger("ai.llm_client")
 
-# Defaults configurable via environment variables
-DEFAULT_LLAMA_SERVER_URL = os.getenv(
-    "LLAMA_SERVER_URL", "http://127.0.0.1:8080/v1/chat/completions"
-)
-DEFAULT_LLAMA_HEALTH_URL = os.getenv(
-    "LLAMA_HEALTH_URL", "http://127.0.0.1:8080/health"
-)
-DEFAULT_MODEL = os.getenv(
-    "LLM_MODEL", "unsloth/Qwen3.5-4B-MTP-GGUF:Q5_K_M"
-)
+def resolve_llm_endpoints(
+    llama_server_url: Optional[str] = None,
+    ollama_url: Optional[str] = None,
+    openai_base_url: Optional[str] = None,
+    health_url: Optional[str] = None,
+) -> Tuple[str, str]:
+    """
+    Resolves the chat completions endpoint and health probe endpoint.
+    Supports Ollama, OpenAI-compatible servers, and llama-server.
+    Priority:
+    1. OLLAMA_URL / OLLAMA_HOST
+    2. OPENAI_BASE_URL / LLM_BASE_URL
+    3. LLAMA_SERVER_URL
+    4. Default fallback: http://127.0.0.1:8080/v1/chat/completions
+    """
+    raw_ollama = ollama_url or os.getenv("OLLAMA_URL") or os.getenv("OLLAMA_HOST")
+    raw_openai = openai_base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL")
+    raw_llama = llama_server_url or os.getenv("LLAMA_SERVER_URL")
+
+    # Priority 1: OLLAMA_URL
+    if raw_ollama:
+        url = raw_ollama.strip().rstrip("/")
+        if url.endswith("/v1/chat/completions"):
+            completions = url
+            base = url[:-len("/v1/chat/completions")]
+        elif url.endswith("/api/chat"):
+            base = url[:-len("/api/chat")]
+            completions = f"{base}/v1/chat/completions"
+        elif url.endswith("/v1"):
+            base = url[:-len("/v1")]
+            completions = f"{url}/chat/completions"
+        else:
+            base = url
+            completions = f"{url}/v1/chat/completions"
+        health = health_url or os.getenv("LLAMA_HEALTH_URL") or f"{base}/v1/models"
+        return completions, health
+
+    # Priority 2: OPENAI_BASE_URL
+    if raw_openai:
+        url = raw_openai.strip().rstrip("/")
+        if url.endswith("/chat/completions"):
+            completions = url
+            base = url[:-len("/chat/completions")]
+        elif url.endswith("/v1"):
+            completions = f"{url}/chat/completions"
+            base = url
+        else:
+            completions = f"{url}/v1/chat/completions"
+            base = f"{url}/v1"
+        health = health_url or os.getenv("LLAMA_HEALTH_URL") or f"{base}/models"
+        return completions, health
+
+    # Priority 3: LLAMA_SERVER_URL
+    if raw_llama:
+        url = raw_llama.strip().rstrip("/")
+        if url.endswith("/chat/completions"):
+            completions = url
+            base = re.sub(r"/v1.*$", "", url)
+        elif url.endswith("/v1"):
+            completions = f"{url}/chat/completions"
+            base = url[:-len("/v1")]
+        else:
+            completions = f"{url}/v1/chat/completions"
+            base = url
+        health = health_url or os.getenv("LLAMA_HEALTH_URL") or f"{base}/health"
+        return completions, health
+
+    # Default fallback to localhost llama-server
+    completions = "http://127.0.0.1:8080/v1/chat/completions"
+    health = health_url or os.getenv("LLAMA_HEALTH_URL") or "http://127.0.0.1:8080/health"
+    return completions, health
+
+
+def resolve_default_model(model_override: Optional[str] = None) -> str:
+    """Resolves default model name based on LLM_MODEL or detected backend."""
+    if model_override:
+        return model_override
+    env_model = os.getenv("LLM_MODEL")
+    if env_model:
+        return env_model
+    if os.getenv("OLLAMA_URL") or os.getenv("OLLAMA_HOST"):
+        return "qwen3.5:4b"
+    return "unsloth/Qwen3.5-4B-MTP-GGUF:Q5_K_M"
+
+
+# Dynamic defaults computed via resolvers
+_resolved_completions, _resolved_health = resolve_llm_endpoints()
+DEFAULT_LLAMA_SERVER_URL = _resolved_completions
+DEFAULT_LLAMA_HEALTH_URL = _resolved_health
+DEFAULT_MODEL = resolve_default_model()
 DEFAULT_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT", "15.0"))
 DEFAULT_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT", "3.0"))
 
@@ -135,27 +215,35 @@ class LLMClient:
 
     def __init__(
         self,
-        completions_url: str = DEFAULT_LLAMA_SERVER_URL,
-        health_url: str = DEFAULT_LLAMA_HEALTH_URL,
-        model: str = DEFAULT_MODEL,
+        completions_url: Optional[str] = None,
+        health_url: Optional[str] = None,
+        model: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
     ):
-        self.completions_url = completions_url
-        self.health_url = health_url
-        self.model = model
+        if completions_url is None or health_url is None:
+            resolved_c, resolved_h = resolve_llm_endpoints(
+                llama_server_url=completions_url,
+                health_url=health_url,
+            )
+            self.completions_url = completions_url or resolved_c
+            self.health_url = health_url or resolved_h
+        else:
+            self.completions_url = completions_url
+            self.health_url = health_url
+        self.model = model or resolve_default_model()
         self.timeout = httpx.Timeout(timeout, connect=connect_timeout)
 
     async def check_health(self) -> bool:
         """
-        Pings llama-server to verify connectivity.
-        Checks /health endpoint, falling back to /v1/models.
+        Pings upstream LLM server to verify connectivity.
+        Checks configured health endpoint, falling back to /v1/models and root /.
         Returns True if reachable and responding, False otherwise.
         """
         probe_timeout = httpx.Timeout(2.0, connect=1.0)
         try:
             async with httpx.AsyncClient(timeout=probe_timeout) as client:
-                # 1. Try health endpoint
+                # 1. Try health endpoint (/health or /v1/models)
                 try:
                     resp = await client.get(self.health_url)
                     if resp.status_code == 200:
@@ -163,10 +251,27 @@ class LLMClient:
                 except httpx.HTTPError:
                     pass
 
-                # 2. Try OpenAI models endpoint
-                models_url = self.completions_url.replace("/chat/completions", "/models")
-                resp = await client.get(models_url)
-                return resp.status_code == 200
+                # 2. Try OpenAI models endpoint (/v1/models)
+                try:
+                    models_url = self.completions_url.replace("/chat/completions", "/models")
+                    if models_url != self.health_url:
+                        resp = await client.get(models_url)
+                        if resp.status_code == 200:
+                            return True
+                except httpx.HTTPError:
+                    pass
+
+                # 3. Try root endpoint (/) for Ollama
+                try:
+                    root_url = re.sub(r"/v1.*$", "/", self.completions_url)
+                    if root_url not in (self.health_url, self.completions_url):
+                        resp = await client.get(root_url)
+                        if resp.status_code == 200:
+                            return True
+                except httpx.HTTPError:
+                    pass
+
+                return False
         except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
             return False
 
@@ -254,6 +359,130 @@ class LLMClient:
         parsed_json = parse_llm_json(raw_content)
         return parsed_json, raw_content
 
+    async def generate_chat_completion_stream_parts(
+        self,
+        system_prompt: str,
+        user_message: str,
+        temperature: float = DEFAULT_TEMPERATURE,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        top_p: float = DEFAULT_TOP_P,
+        presence_penalty: float = DEFAULT_PRESENCE_PENALTY,
+        top_k: int = DEFAULT_TOP_K,
+        enable_thinking: bool = DEFAULT_ENABLE_THINKING,
+        extra_body: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Connects to llama-server / OpenAI endpoint with stream=True.
+        Yields tuple (part_type, parsed_data, raw_str):
+        1. ("partial", partial_dict, accumulated): yielded as soon as speech_tokens block is ready
+        2. ("full", full_dict, accumulated): yielded when choices generation completes
+        """
+        extra_body_dict: Dict[str, Any] = {
+            "top_k": top_k,
+            "chat_template_kwargs": {"enable_thinking": enable_thinking},
+        }
+        if extra_body:
+            extra_body_dict.update(extra_body)
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            "temperature": temperature,
+            "top_p": top_p,
+            "presence_penalty": presence_penalty,
+            "max_tokens": max_tokens,
+            "stream": True,
+            "response_format": {"type": "json_object"},
+            "top_k": top_k,
+            "chat_template_kwargs": {"enable_thinking": enable_thinking},
+            "extra_body": extra_body_dict,
+        }
+
+        accumulated = ""
+        yielded_partial = False
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with client.stream(
+                "POST",
+                self.completions_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            ) as response:
+                if response.status_code != 200:
+                    body = await response.aread()
+                    raise LLMResponseError(response.status_code, body.decode("utf-8", errors="replace"))
+
+                async for raw_line in response.aiter_lines():
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        data_str = line[len("data: "):].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk_obj = json.loads(data_str)
+                            delta = chunk_obj["choices"][0].get("delta", {}).get("content", "")
+                            accumulated += delta
+                        except Exception:
+                            continue
+
+                        # Strip reasoning / thinking tokens before inspecting partial JSON
+                        clean_text = strip_thinking_tokens(accumulated)
+                        clean_text = strip_markdown_fences(clean_text)
+
+                        # When "choices" array appears in stream, speech_tokens and FSM params are ready
+                        if not yielded_partial and '"choices"' in clean_text:
+                            choices_idx = clean_text.find('"choices"')
+                            part_text = clean_text[:choices_idx].strip()
+                            part_text = part_text.rstrip(", \t\r\n") + "\n}"
+                            try:
+                                partial_dict = parse_llm_json(part_text)
+                                if partial_dict.get("speech_tokens") or partial_dict.get("tokens"):
+                                    yielded_partial = True
+                                    yield ("partial", partial_dict, accumulated)
+                            except Exception:
+                                pass
+
+                        # Early detection: as soon as speech_tokens block is closed, yield partial response
+                        if not yielded_partial:
+                            tokens_key = '"speech_tokens"' if '"speech_tokens"' in clean_text else ('"tokens"' if '"tokens"' in clean_text else None)
+                            if tokens_key:
+                                key_idx = clean_text.find(tokens_key)
+                                close_bracket_idx = clean_text.find("]", key_idx)
+                                if close_bracket_idx != -1:
+                                    part_text = clean_text[:close_bracket_idx + 1].strip().rstrip(", \t\r\n") + "\n}"
+                                    try:
+                                        partial_dict = parse_llm_json(part_text)
+                                        if partial_dict.get("speech_tokens") or partial_dict.get("tokens"):
+                                            yielded_partial = True
+                                            yield ("partial", partial_dict, accumulated)
+                                    except Exception:
+                                        pass
+
+                        # Early detection of choices completion: once choices array is closed and has 4 items
+                        if yielded_partial and '"choices"' in clean_text:
+                            choices_key_idx = clean_text.find('"choices"')
+                            close_choices_idx = clean_text.find("]", choices_key_idx)
+                            if close_choices_idx != -1:
+                                full_candidate = clean_text[:close_choices_idx + 1].strip().rstrip(", \t\r\n") + "\n}"
+                                try:
+                                    full_dict = parse_llm_json(full_candidate)
+                                    if len(full_dict.get("choices", [])) >= 4:
+                                        yield ("full", full_dict, accumulated)
+                                        return
+                                except Exception:
+                                    pass
+
+        # End of stream: parse and yield full result
+        full_dict = parse_llm_json(accumulated)
+        if not yielded_partial:
+            yield ("partial", full_dict, accumulated)
+        yield ("full", full_dict, accumulated)
+
 
 __all__ = [
     "DEFAULT_LLAMA_SERVER_URL",
@@ -276,5 +505,7 @@ __all__ = [
     "strip_markdown_fences",
     "extract_json_object",
     "parse_llm_json",
+    "resolve_llm_endpoints",
+    "resolve_default_model",
     "LLMClient",
 ]

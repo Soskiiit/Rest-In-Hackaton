@@ -49,8 +49,6 @@ _kokoro_load_attempted = False
 def get_kokoro():
     """Lazy loader for Kokoro ONNX model instance."""
     global _kokoro_instance, _kokoro_load_attempted
-    if os.getenv("MOCK_MODE", "").lower() in ("1", "true", "yes") or os.getenv("TTS_BACKEND") == "formant":
-        return None
     if _kokoro_instance is not None:
         return _kokoro_instance
     if _kokoro_load_attempted:
@@ -555,7 +553,7 @@ def synthesize_wav(
     Returns (wav_bytes, duration_seconds).
     """
     # Priority 0: Kokoro Neural Synthesis (if available and not forced to formant)
-    if os.environ.get("TTS_ENGINE", "kokoro").lower() != "formant":
+    if os.environ.get("TTS_ENGINE", "formant").lower() != "formant":
         synth_text = text
         if not synth_text and tokens:
             zh_parts = []

@@ -49,6 +49,9 @@ export class AuthScreen {
     this.overlay.setAttribute('role', 'dialog');
     this.overlay.setAttribute('aria-modal', 'true');
     this.overlay.setAttribute('aria-labelledby', 'auth-title');
+    this.overlay.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
 
     const card = el('div', 'auth-card');
     const badge = el('div', 'cyber-badge', 'ВХОД В МИР');
@@ -126,7 +129,6 @@ export class AuthScreen {
 
     // Клавиши не должны доходить до игры, пока открыт экран входа.
     this.overlay.addEventListener('keydown', (event) => event.stopPropagation());
-    this.overlay.addEventListener('click', (event) => event.stopPropagation());
 
     parent.appendChild(this.overlay);
     this.setMode('login');

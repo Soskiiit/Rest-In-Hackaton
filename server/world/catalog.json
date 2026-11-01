@@ -171,6 +171,8 @@
   },
   "profiles": {
     "business": [
+      "word_hello",
+      "word_this",
       "word_expensive",
       "word_money",
       "word_cheap",
@@ -182,20 +184,21 @@
       "word_hundred"
     ],
     "culture": [
+      "word_hello",
+      "word_this",
       "word_jade",
       "word_cup",
       "word_tea",
       "word_boss",
       "word_sorry",
-      "word_hello",
       "word_authentic"
     ]
   },
   "npcs": {
     "lao_wang": {
       "id": "lao_wang",
-      "x": 110,
-      "z": 110,
+      "x": 100,
+      "z": 124,
       "price": 800,
       "price_floor": 120,
       "kind": "merchant"
@@ -220,8 +223,8 @@
   "items": {
     "teapot": {
       "id": "teapot",
-      "x": 112,
-      "z": 110,
+      "x": 101,
+      "z": 124,
       "word_id": "word_teapot",
       "answer_id": 1,
       "options": [
@@ -252,9 +255,9 @@
       ]
     },
     "jade_amulet": {
-      "z": 110,
+      "z": 125,
       "answer_id": 1,
-      "x": 113,
+      "x": 101,
       "id": "jade_amulet",
       "options": [
         {

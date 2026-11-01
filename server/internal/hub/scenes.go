@@ -125,7 +125,21 @@ func (h *Hub) sendScene(c *client, s *liveScene) {
 		return
 	}
 	p := s.stored.Reply
-	speech := Speech{NPCID: s.data.NPCID, PlayerID: s.stored.Actor, Tokens: p.Tokens, Choices: []game.Choice{}, Emotion: p.Emotion, Mianzi: s.data.Mianzi, Aggro: s.data.Aggro, Price: s.data.Price, State: s.data.State, Fallback: s.stored.Fallback, Offers: h.offers(s.data.NPCID), SceneVersion: s.data.Version}
+	speech := Speech{
+		NPCID:        s.data.NPCID,
+		PlayerID:     s.stored.Actor,
+		Tokens:       p.Tokens,
+		Choices:      []game.Choice{},
+		Emotion:      p.Emotion,
+		Mianzi:       s.data.Mianzi,
+		Aggro:        s.data.Aggro,
+		Price:        s.data.Price,
+		State:        s.data.State,
+		Fallback:     s.stored.Fallback,
+		Offers:       h.offers(s.data.NPCID),
+		SceneVersion: s.data.Version,
+		AudioBase64:  p.AudioBase64,
+	}
 	npc := h.catalog.NPCs[s.data.NPCID]
 	if game.Near(c.player.X, c.player.Z, npc.X, npc.Z, interactionRadius) {
 		speech.TurnID = turnID(s)

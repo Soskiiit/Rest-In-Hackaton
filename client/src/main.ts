@@ -4,11 +4,14 @@
  */
 
 import './style.css';
-import { ServerWorld } from './engine/ServerWorld';
-import { OnlinePanel } from './ui/OnlinePanel';
+import * as THREE from 'three';
 import { World } from './engine/World';
 import { PlayerController } from './engine/PlayerController';
 import { OtherPlayerManager } from './engine/OtherPlayerManager';
+import { AppMode, EditorStateManager } from './editor/EditorState';
+import { EditorCamera } from './editor/EditorCamera';
+import { PlayerGhostBeacon } from './editor/PlayerGhostBeacon';
+import { LevelEditor } from './editor/LevelEditor';
 import { WSClient } from './net/WSClient';
 import { MockServer } from './net/MockServer';
 import { HUD } from './ui/HUD';
@@ -41,10 +44,9 @@ const MOVE_SEND_INTERVAL_SEC = 0.05; // 20 Hz (50 ms)
 export const LAO_WANG_CONFIG = {
   id: 'lao_wang',
   name: 'Лао Ван (老王)',
-  worldPosition: { x: 110.0, y: 0.0, z: 109.5 },
-  // Additional central position in North Plaza matching the pink square
-  centralPosition: { x: 100.0, y: 0.0, z: 124.0 },
-  chunkCoord: { cx: 5, cz: 5 },
+  // Central pavilion in North Plaza; matches the server catalog entry.
+  worldPosition: { x: 100.0, y: 0.0, z: 124.0 },
+  chunkCoord: { cx: 5, cz: 6 },
   interactionRadius: 3.5,
   interactionRadiusSq: 12.25, // 3.5 * 3.5
   promptKey: 'F',
@@ -59,9 +61,9 @@ export const TEAPOT_CONFIG = {
   zh: '茶壶',
   py: 'Cháhú',
   question: 'Как переводится это слово?',
-  worldPosition: { x: 110.0, y: 0.9, z: 108.5 },
-  centralPosition: { x: 99.2, y: 0.9, z: 124.3 },
-  chunkCoord: { cx: 5, cz: 5 },
+  // Teapot on the central pavilion counter.
+  worldPosition: { x: 99.2, y: 0.9, z: 124.3 },
+  chunkCoord: { cx: 5, cz: 6 },
   interactionRadius: 3.0,
   interactionRadiusSq: 9.0, // 3.0 * 3.0
   promptKey: 'E',
@@ -76,14 +78,6 @@ export const TEAPOT_CONFIG = {
 
 class Application {
   private world!: World;
-  private serverWorld!: ServerWorld;
-  private onlinePanel!: OnlinePanel;
-  private activeTurnId = '';
-  private activeQuizId = '';
-  private activeQuizItem = '';
-  private requestedNpc: string | null = null;
-  private dialoguePending = false;
-
   private playerController!: PlayerController;
   private otherPlayerManager!: OtherPlayerManager;
   private wsClient!: WSClient;
@@ -114,15 +108,38 @@ class Application {
   private fpsAccumulator = 0;
   private currentFps = 60;
 
-  // Player Telemetry & Vocabulary
+  // Player Telemetry & Vocabulary (Universal starter survival words: 你好, 这是)
   private playerBalance = 500;
-  private knownWords = new Set<string>();
+  private knownWords = new Set<string>(['word_hello', 'word_this']);
+
+  // Obstacle Collision Caching
+  private lastSyncedObstacles: any = null;
 
   // Modal Lock & Interaction State
   private isModalActive = false;
   private isNearLaoWang = false;
   private isNearTeapot = false;
+  private isDialogueActive = false;
   private activeNpcId: string | null = null;
+  private activeTurnId: string | null = null;
+  private speechDismissTimeout: number | null = null;
+  private lastNpcSpeech: Record<string, NpcSpeechPayload> = {};
+
+  // Milestone M1 & M5: Level Editor Subsystems
+  private editorState = new EditorStateManager();
+  private editorCamera!: EditorCamera;
+  private ghostBeacon: PlayerGhostBeacon | null = null;
+  private levelEditor!: LevelEditor;
+  private savedPlayerState: {
+    position: THREE.Vector3;
+    yaw: number;
+    cameraQuaternion: THREE.Quaternion;
+    cameraPosition: THREE.Vector3;
+  } | null = null;
+  private modeToggleBtn: HTMLElement | null = null;
+  private editorStatsEl: HTMLElement | null = null;
+  private editorCoordsEl: HTMLElement | null = null;
+  private editorSpeedEl: HTMLElement | null = null;
 
   public async init(): Promise<void> {
     console.log('[Main] Initializing Rest-In-Hackaton Client...');
@@ -135,6 +152,11 @@ class Application {
     await this.initNetworking();
     this.bindInputAndPointerLock();
     this.bindWindowEvents();
+
+    // Milestone M5: Reconstruct saved chunk entities on startup
+    await this.levelEditor.loadAllStoredChunks().catch((err) => {
+      console.warn('[Main] Non-fatal error loading saved chunks:', err);
+    });
 
     console.log('[Main] Initialization complete. Starting render loop.');
     requestAnimationFrame((t) => this.animate(t));
@@ -155,6 +177,71 @@ class Application {
 
   private initHUD(): void {
     this.hud = new HUD();
+    this.initEditorUI();
+  }
+
+  private initEditorUI(): void {
+    // 1. Locate or create #mode-toggle-btn in HUD header
+    this.modeToggleBtn = document.getElementById('mode-toggle-btn');
+    if (!this.modeToggleBtn && typeof document !== 'undefined') {
+      const hudHeader = document.querySelector('#hud .hud-header');
+      if (hudHeader) {
+        const btn = document.createElement('button');
+        btn.id = 'mode-toggle-btn';
+        btn.className = 'cyber-mode-btn';
+        btn.type = 'button';
+        btn.title = 'Переключить режим (F2)';
+        btn.innerHTML = `<span id="mode-toggle-icon" class="mode-icon">🎮</span> <span id="mode-toggle-text">Play Mode</span> <span class="mode-hotkey">[F2]</span>`;
+        const statusEl = document.getElementById('hud-status');
+        if (statusEl && statusEl.parentNode === hudHeader) {
+          hudHeader.insertBefore(btn, statusEl);
+        } else {
+          hudHeader.appendChild(btn);
+        }
+        this.modeToggleBtn = btn;
+      }
+    }
+
+    if (this.modeToggleBtn) {
+      this.modeToggleBtn.onclick = (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.toggleAppMode();
+      };
+    }
+
+    // 2. Locate or create #hud-editor-stats in HUD body
+    this.editorStatsEl = document.getElementById('hud-editor-stats');
+    if (!this.editorStatsEl && typeof document !== 'undefined') {
+      const hudBody = document.querySelector('#hud .hud-body');
+      if (hudBody) {
+        const stats = document.createElement('div');
+        stats.id = 'hud-editor-stats';
+        stats.className = 'hidden';
+        stats.innerHTML = `
+          <div class="hud-row">
+            <span class="hud-label">РЕЖИМ:</span>
+            <span id="hud-editor-badge" class="badge-editor">РЕДАКТОР УРОВНЕЙ</span>
+          </div>
+          <div class="hud-row">
+            <span class="hud-label">КАМЕРА (X, Y, Z):</span>
+            <span id="hud-editor-coords" class="hud-val neon-cyan-val">(100.0, 15.0, 100.0)</span>
+          </div>
+          <div class="hud-row">
+            <span class="hud-label">СКОРОСТЬ:</span>
+            <span id="hud-editor-speed" class="hud-val neon-amber-val">15.0 m/s</span>
+          </div>
+          <div class="hud-row hud-editor-hints">
+            <span class="editor-hint-text">WASD: полет | Q/E: высота | ПКМ: обзор | Колесо: скорость</span>
+          </div>
+        `;
+        hudBody.appendChild(stats);
+        this.editorStatsEl = stats;
+      }
+    }
+
+    this.editorCoordsEl = document.getElementById('hud-editor-coords');
+    this.editorSpeedEl = document.getElementById('hud-editor-speed');
   }
 
   private initDialogueUI(): void {
@@ -187,33 +274,43 @@ class Application {
 
     // 1. Initialize 3D World (Scene, Fog, Lighting, 200x200 Ground)
     this.world = new World(container);
-    this.serverWorld = new ServerWorld(this.world.getScene());
-    this.onlinePanel = new OnlinePanel((active) => this.setModalActive(active || this.dialogueUI.isOpen() || this.quizPanel.isOpen()));
 
     // 2. Initialize Player Controller (WASD + Mouse Look)
     this.playerController = new PlayerController(this.world.getCamera(), document.body);
 
     // 3. Initialize Remote Players Avatar Manager
     this.otherPlayerManager = new OtherPlayerManager(this.world.getScene());
+
+    // 4. Initialize DCC Free Fly Editor Camera & Ghost Beacon (Milestone M1)
+    this.editorCamera = new EditorCamera(this.world.getCamera(), container, {
+      baseMoveSpeed: 15.0,
+      shiftMultiplier: 2.5,
+      altMultiplier: 0.3,
+      wheelStep: 1.15,
+    });
+    this.ghostBeacon = new PlayerGhostBeacon(this.world.getScene());
+
+    // 5. Wire Editor Mode Transition Listener
+    this.editorState.addListener((targetMode: AppMode, prevMode?: AppMode) => {
+      this.handleModeChanged(targetMode, prevMode);
+    });
+
+    // 6. Master Level Editor (Milestone M5)
+    this.levelEditor = new LevelEditor({
+      scene: this.world.getScene(),
+      camera: this.world.getCamera(),
+      domElement: container,
+      world: this.world,
+      stateManager: this.editorState,
+      editorCamera: this.editorCamera,
+      ghostBeacon: this.ghostBeacon,
+      playerController: this.playerController,
+      hud: this.hud,
+      autoInitUI: true,
+    });
   }
 
   private wireNetworkHandlers(client: WSClient): void {
-    if (!client.isMockMode) this.onlinePanel.bind(client);
-    client.onConnectionChange((state) => { if (state !== 'open') { this.dialoguePending = false; this.requestedNpc = null; } });
-    client.on('CHUNK_LOAD', (p) => this.serverWorld.load(p));
-    client.on('CHUNK_UNLOAD', (p) => this.serverWorld.unload(p.chunk_ids));
-    client.on('WORLD_STATS', (p) => { this.serverWorld.dataPercent = p.data_percent; });
-    client.on('QUIZ', (p) => {
-      this.activeQuizId = p.quiz_id;
-      this.activeQuizItem = p.item_id;
-      this.setModalActive(true);
-      this.quizPanel.open({ itemId: p.item_id, title: 'Осмотр предмета', zh: p.audio_text, py: '', question: 'Как переводится это слово?', options: p.options.map((o: {id: number; ru: string}) => ({ id: o.id, text: o.ru })), wordId: '' });
-    });
-    client.on('QUIZ_RESULT', (p) => { this.activeQuizId = ''; this.quizPanel.showServerResult(p.correct); });
-    client.on('NPC_LEAVE', (p) => { if (this.activeNpcId === p.npc_id) this.dialogueUI.close(); });
-    client.on('DIALOGUE_PENDING', (p) => { if (p.npc_id === this.requestedNpc) this.dialoguePending = true; });
-    client.on('DIALOGUE_DONE', () => { this.dialoguePending = false; });
-
     // 1. Remote Player Movement (Stage 1)
     client.on('PLAYER_MOVE', (payload) => {
       this.otherPlayerManager.updatePlayer(payload);
@@ -230,6 +327,21 @@ class Application {
       this.handleNpcSpeech(payload);
     });
 
+    // 3a. Dialogue Pending: NPC is thinking / generating response
+    client.on('DIALOGUE_PENDING', (payload: any) => {
+      this.handleDialoguePending(payload);
+    });
+
+    // 3b. NPC Speech Partial: First chunk containing NPC reply and audio
+    client.on('NPC_SPEECH_PARTIAL', (payload: NpcSpeechPayload) => {
+      this.handleNpcSpeechPartial(payload);
+    });
+
+    // 3c. Dialogue Choices: Second chunk containing interactive choices
+    client.on('DIALOGUE_CHOICES', (payload: any) => {
+      this.handleDialogueChoices(payload);
+    });
+
     // 4. NPC State: Update Mianzi / Aggro Gauges (Stage 3)
     client.on('NPC_STATE', (payload: NpcStatePayload) => {
       this.handleNpcState(payload);
@@ -242,8 +354,6 @@ class Application {
 
     // 6. Авторизованная сессия: актуальное состояние игрока от сервера
     client.on('WELCOME', (payload: WelcomePayload) => {
-      this.serverWorld.clear();
-      this.otherPlayerManager.clear();
       this.applyPlayerState(payload.player, payload.known_words, true);
     });
 
@@ -270,8 +380,7 @@ class Application {
     });
 
     client.on('ERROR', (payload) => {
-      this.dialoguePending = false;
-      this.hud.showToast(payload?.code ?? 'Ошибка сервера');
+      console.warn('[Main] Server error:', payload?.code ?? payload);
     });
   }
 
@@ -284,7 +393,6 @@ class Application {
       return;
     }
 
-    TTS.useMiddleware('/ai/tts');
     this.authClient = new AuthClient(resolveApiBase(window.location));
     this.authScreen = new AuthScreen(this.authClient);
     this.bindLogout();
@@ -303,9 +411,11 @@ class Application {
 
     for (;;) {
       if (!session) {
+        this.setModalActive(true);
         const result = await authScreen.show(message);
         if (result.kind === 'offline') {
           authScreen.hide();
+          this.setModalActive(false);
           this.activateMockServer();
           return;
         }
@@ -316,6 +426,7 @@ class Application {
       authScreen.showConnecting();
       if (await this.connectWithSession(session)) {
         authScreen.hide();
+        this.setModalActive(false);
         this.hud.showToast(`Добро пожаловать, ${session.player.login}!`);
         return;
       }
@@ -333,13 +444,10 @@ class Application {
   private async connectWithSession(session: AuthSession): Promise<boolean> {
     const authClient = this.authClient!;
     this.wsClient?.disconnect();
-    this.serverWorld.clear();
 
     const client = new WSClient({ url: wsUrlFor(authClient.apiBase, session.token), mock: false });
     this.wsClient = client;
     this.wireNetworkHandlers(client);
-    client.onConnectionChange((state) => this.hud.setWsStatus(state === 'open' ? 'connected' : 'disconnected'));
-    client.on('WELCOME', () => { this.dialogueUI.close(); this.quizPanel.close(); this.activeTurnId = ''; });
     this.applyPlayerState(session.player, session.knownWords, false);
 
     try {
@@ -365,7 +473,7 @@ class Application {
   ): void {
     this.playerBalance = player.balance;
     this.hud.updateBalance(player.balance);
-    this.knownWords = new Set(knownWords);
+    this.knownWords = new Set([...(knownWords || []), 'word_hello', 'word_this']);
     if (moveToServerPosition) {
       const current = this.playerController.getPosition();
       this.playerController.setPosition(player.x, current.y, player.z);
@@ -382,6 +490,7 @@ class Application {
     this.setAuthStatus(null);
     this.otherPlayerManager.clear();
     this.playerController.exitPointerLock();
+    this.setModalActive(true);
     this.hud.setWsStatus('disconnected');
     if (this.authClient && this.authScreen && !this.authScreen.isVisible()) {
       await this.startOnlineSession(null, message);
@@ -392,8 +501,6 @@ class Application {
   private setAuthStatus(login: string | null): void {
     const box = document.getElementById('auth-status');
     const name = document.getElementById('auth-status-login');
-    const badge = document.querySelector('#instructions .cyber-badge');
-    if (badge) badge.textContent = login ? 'LAN · ONLINE' : '3D SHOWCASE / DEMO MODE';
     if (!box || !name) return;
     name.textContent = login ?? '';
     box.classList.toggle('hidden', !login);
@@ -411,28 +518,30 @@ class Application {
   }
 
   private activateMockServer(): void {
-    this.serverWorld.clear();
-    this.onlinePanel.hide();
-    this.world.enableDemoWorld();
-    TTS.useMiddleware(null);
     console.log('[Main] Running in standalone MockServer mode.');
     this.wsClient = new WSClient({ mock: true });
     this.wsClient.connect();
     this.mockServer = this.wsClient.getMockServer();
+    if (this.mockServer) {
+      this.mockServer.setAsyncDelivery(true);
+    }
     this.wireNetworkHandlers(this.wsClient);
     this.hud.setWsStatus('mock');
   }
 
   private bindInputAndPointerLock(): void {
-    window.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !this.isOffline() && !this.isModalActive && this.wsClient?.isConnected) {
-        event.preventDefault();
-        this.onlinePanel.focusChat();
-      }
-    });
     // Clicking instructions blocker engages PointerLock
-    this.blockerEl.addEventListener('click', () => {
-      if (!this.isModalActive) {
+    this.blockerEl.addEventListener('click', (event: MouseEvent) => {
+      if (this.editorState.isEditor()) {
+        return;
+      }
+      if (event?.target && (event.target as HTMLElement).closest('button, input, a, select')) {
+        return;
+      }
+      if (this.authScreen?.isVisible()) {
+        return;
+      }
+      if (!this.isModalActive && !this.dialogueUI?.isOpen() && !this.quizPanel?.isOpen()) {
         this.playerController.requestPointerLock();
       }
     });
@@ -442,7 +551,10 @@ class Application {
     });
 
     this.playerController.onUnlock(() => {
-      if (!this.isModalActive) {
+      if (this.editorState.isEditor()) {
+        return;
+      }
+      if (!this.isModalActive && !this.isDialogueActive && !this.authScreen?.isVisible() && !this.dialogueUI?.isOpen() && !this.quizPanel?.isOpen()) {
         this.blockerEl.classList.remove('hidden');
       }
     });
@@ -454,11 +566,13 @@ class Application {
     });
 
     window.addEventListener('beforeunload', () => {
-      this.serverWorld.clear();
       this.wsClient?.disconnect();
       this.mockServer?.stop();
       this.world?.dispose();
     });
+
+    // Note: F2 mode toggling is handled strictly by LevelEditor to prevent double-event conflicts
+
 
     // Key 'F' interaction trigger (Lao Wang NPC Dialogue)
     window.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -488,10 +602,138 @@ class Application {
   }
 
   /**
+   * Toggles between GAME and EDITOR modes.
+   */
+  public toggleAppMode(): void {
+    if (this.authScreen?.isVisible()) return;
+    if (this.levelEditor) {
+      this.levelEditor.toggleMode();
+    } else {
+      this.editorState.toggleMode();
+    }
+  }
+
+  private handleModeChanged(targetMode: AppMode, prevMode?: AppMode): void {
+    console.log(`[Main] Application mode transition: ${prevMode ?? 'none'} -> ${targetMode}`);
+    if (targetMode === AppMode.EDITOR) {
+      this.enterEditorMode();
+    } else {
+      this.exitEditorMode();
+    }
+  }
+
+  private enterEditorMode(): void {
+    // 1. Close any open gameplay modals
+    if (this.dialogueUI?.isOpen()) {
+      this.dialogueUI.close();
+      this.handleDialogueClose();
+    }
+    if (this.quizPanel?.isOpen()) {
+      this.quizPanel.close();
+      this.handleQuizClose();
+    }
+    this.hideInteractionPrompt();
+
+    // 2. Save player position & orientation
+    const pPos = this.playerController.getPosition();
+    const pYaw = this.playerController.getYaw();
+    const cam = this.world.getCamera();
+    this.savedPlayerState = {
+      position: new THREE.Vector3(pPos.x, pPos.y, pPos.z),
+      yaw: pYaw,
+      cameraQuaternion: cam.quaternion.clone(),
+      cameraPosition: cam.position.clone(),
+    };
+
+    // 3. Suspend player input & release pointer lock
+    this.playerController.setLocked(true);
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+
+    // 4. UI Adjustments
+    this.blockerEl.classList.add('hidden');
+    document.getElementById('crosshair')?.classList.add('hidden');
+    this.updateModeToggleUI(AppMode.EDITOR);
+
+    // 5. Spawn Ghost Beacon at saved player position
+    if (this.ghostBeacon) {
+      this.ghostBeacon.spawn(pPos, pYaw);
+    }
+
+    // 6. Activate Free DCC Camera (EditorCamera)
+    if (this.editorCamera) {
+      this.editorCamera.setPosition(cam.position);
+      this.editorCamera.syncFromCamera();
+      this.editorCamera.enable();
+    }
+
+    // 7. Feedback toast (if not handled by LevelEditor)
+    if (!this.levelEditor) {
+      this.hud.showToast('Режим редактора: Свободная камера (WASD + QE + ПКМ)');
+    }
+  }
+
+  private exitEditorMode(): void {
+    // 1. Disable Free DCC Camera
+    if (this.editorCamera) {
+      this.editorCamera.disable();
+    }
+
+    // 2. Remove Ghost Beacon from scene
+    if (this.ghostBeacon) {
+      this.ghostBeacon.remove();
+    }
+
+    // 3. Restore player camera position & orientation
+    if (this.savedPlayerState) {
+      this.playerController.resetCameraToPlayer(this.savedPlayerState.yaw);
+      this.world.getCamera().quaternion.copy(this.savedPlayerState.cameraQuaternion);
+    }
+
+    // 4. Re-enable player controller
+    this.playerController.setLocked(false);
+
+    // 5. UI Adjustments
+    document.getElementById('crosshair')?.classList.remove('hidden');
+    this.updateModeToggleUI(AppMode.GAME);
+
+    // 6. Feedback toast (if not handled by LevelEditor)
+    if (!this.levelEditor) {
+      this.hud.showToast('Игровой режим возобновлен [F2 для Редактора]');
+    }
+  }
+
+  private updateModeToggleUI(mode: AppMode): void {
+    const isEditor = mode === AppMode.EDITOR;
+    if (this.modeToggleBtn) {
+      this.modeToggleBtn.classList.toggle('mode-editor-active', isEditor);
+      this.modeToggleBtn.classList.toggle('mode-active-editor', isEditor);
+    }
+    const icon = document.getElementById('mode-toggle-icon');
+    if (icon) {
+      icon.textContent = isEditor ? '🛠️' : '🎮';
+    }
+    const text = document.getElementById('mode-toggle-text');
+    if (text) {
+      text.textContent = isEditor ? 'Level Editor' : 'Play Mode';
+    }
+    if (this.editorStatsEl) {
+      this.editorStatsEl.classList.toggle('hidden', !isEditor);
+    }
+    const coordsRow = document.getElementById('hud-coords')?.closest('.hud-row');
+    const balanceRow = document.getElementById('hud-balance')?.closest('.hud-row');
+    if (coordsRow) coordsRow.classList.toggle('hidden', isEditor);
+    if (balanceRow) balanceRow.classList.toggle('hidden', isEditor);
+  }
+
+  /**
    * Modal Lock API used by DialogueUI (Stage 3) and QuizPanel (Stage 4).
    * Unlocks pointer and suspends WASD movement while modal is open.
    */
   public setModalActive(active: boolean): void {
+    if (this.editorState.isEditor()) return;
+
     this.isModalActive = active;
     this.playerController.setModalActive(active);
 
@@ -499,29 +741,152 @@ class Application {
       this.playerController.exitPointerLock();
       this.blockerEl.classList.add('hidden');
     } else {
-      // Re-enable pointer lock prompt if needed
-      this.blockerEl.classList.remove('hidden');
+      // Closing a modal in-game must not pop up the Esc instructions blocker
+      this.blockerEl.classList.add('hidden');
     }
   }
 
   /**
-   * Inbound NPC Speech packet handler. Opens or updates DialogueUI and engages modal lock.
+   * Inbound NPC Speech packet handler. Caches speech and only opens DialogueUI
+   * if the user actively initiated dialogue via [F] or is currently in an active conversation.
    */
   private handleNpcSpeech(payload: NpcSpeechPayload): void {
     console.log(`[Main] NPC speech received from '${payload.npc_id}' (${payload.tokens?.length ?? 0} tokens)`);
-    if (!this.isOffline() && this.requestedNpc !== payload.npc_id && this.activeNpcId !== payload.npc_id) return;
-    this.activeTurnId = payload.turn_id ?? '';
+    this.lastNpcSpeech[payload.npc_id] = payload;
     this.activeNpcId = payload.npc_id;
-    if (!this.isOffline()) TTS.speakZh(payload.tokens.map((token) => token.zh).join(''));
-    if (!this.isOffline()) this.onlinePanel.showOffers(payload.npc_id, payload.offers ?? []);
+    this.activeTurnId = payload.turn_id ?? null;
 
-    // 1. Activate UI modal lock (frees mouse pointer, suspends WASD)
+    // Approaching an NPC must NEVER automatically open dialogue or break pointer lock!
+    // Dialogue should ONLY open when the player presses [F] or is continuing an active dialogue.
+    if (!this.isDialogueActive) {
+      return;
+    }
+
+    // If dialogue UI is already open and displaying progressive partial speech,
+    // do not restart TTS audio or rebuild dialogue from scratch, which would break streaming.
+    if (this.dialogueUI && this.dialogueUI.isOpen()) {
+      if (this.knownWords && typeof (this.dialogueUI as any).refreshSubtitles === 'function') {
+        (this.dialogueUI as any).refreshSubtitles(this.knownWords);
+      }
+      if (Array.isArray(payload.choices) && payload.choices.length > 0) {
+        if (typeof (this.dialogueUI as any).setChoices === 'function') {
+          (this.dialogueUI as any).setChoices(payload.choices, payload.turn_id);
+        }
+      }
+      return;
+    }
+
+    this.openInteractiveDialogue(payload);
+  }
+
+  /**
+   * Inbound DIALOGUE_PENDING packet handler. Notifies UI that NPC is formulating a response.
+   */
+  private handleDialoguePending(payload: any): void {
+    console.log(`[Main] DIALOGUE_PENDING received for npc '${payload?.npc_id}'`);
+    if (this.isDialogueActive && this.dialogueUI && this.dialogueUI.isOpen()) {
+      if (typeof (this.dialogueUI as any).setPending === 'function') {
+        (this.dialogueUI as any).setPending(true, 'Собеседник думает...');
+      }
+    }
+  }
+
+  /**
+   * Inbound NPC_SPEECH_PARTIAL packet handler:
+   * First chunk containing NPC reply, subtitles, meters, and audio.
+   * Renders immediately on client while choices are still being generated!
+   */
+  private handleNpcSpeechPartial(payload: NpcSpeechPayload): void {
+    console.log(`[Main] NPC_SPEECH_PARTIAL received from '${payload.npc_id}' (${payload.tokens?.length ?? 0} tokens)`);
+    this.lastNpcSpeech[payload.npc_id] = payload;
+    this.activeNpcId = payload.npc_id;
+
+    if (!this.isDialogueActive) {
+      return;
+    }
+
+    this.playTTSAudio(payload);
     this.setModalActive(true);
+    this.hideInteractionPrompt();
+
+    if (this.dialogueUI) {
+      if (typeof (this.dialogueUI as any).renderPartialSpeech === 'function') {
+        (this.dialogueUI as any).renderPartialSpeech(
+          payload,
+          this.knownWords,
+          (choiceId: number) => this.handleDialogueChoice(choiceId),
+          () => this.handleDialogueClose()
+        );
+      } else {
+        this.dialogueUI.open(
+          payload,
+          (choiceId: number) => this.handleDialogueChoice(choiceId),
+          () => this.handleDialogueClose(),
+          this.knownWords
+        );
+      }
+    }
+  }
+
+  /**
+   * Inbound DIALOGUE_CHOICES packet handler:
+   * Second chunk containing interactive choices for the player.
+   * Renders choice buttons and restores keyboard selection.
+   */
+  private handleDialogueChoices(payload: any): void {
+    console.log(`[Main] DIALOGUE_CHOICES received for turn '${payload?.turn_id}' with ${payload?.choices?.length ?? 0} options`);
+    if (payload?.turn_id) {
+      this.activeTurnId = payload.turn_id;
+    }
+
+    if (!this.isDialogueActive) {
+      return;
+    }
+
+    this.setModalActive(true);
+
+    if (this.dialogueUI && Array.isArray(payload?.choices)) {
+      if (typeof (this.dialogueUI as any).setChoices === 'function') {
+        (this.dialogueUI as any).setChoices(payload.choices, payload.turn_id);
+      }
+    }
+  }
+
+  private playTTSAudio(payload: NpcSpeechPayload): void {
+    if (!payload.audio_base64) return;
+    try {
+      const binary = atob(payload.audio_base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.play().catch((err) => console.warn('[Main] TTS audio play failed:', err));
+      console.log(`[Main] Playing TTS audio (${bytes.length} bytes) for NPC '${payload.npc_id}'`);
+    } catch (err) {
+      console.warn('[Main] Failed to decode/play TTS audio:', err);
+    }
+  }
+
+  private openInteractiveDialogue(payload: NpcSpeechPayload): void {
+    const hasChoices = Array.isArray(payload.choices) && payload.choices.length > 0;
+    const isInteractive = hasChoices && Boolean(payload.turn_id);
+
+    // 1. Only activate UI modal lock (frees mouse pointer, suspends WASD) if there are interactive choices!
+    if (isInteractive || payload.is_partial) {
+      this.setModalActive(true);
+    } else {
+      this.setModalActive(false);
+    }
 
     // 2. Hide proximity prompt
     this.hideInteractionPrompt();
 
-    // 3. Open DialogueUI
+    // 3. Play TTS audio from AI service (Base64 WAV)
+    this.playTTSAudio(payload);
+
+    // 4. Open DialogueUI
     this.dialogueUI.open(
       payload,
       (choiceId: number) => this.handleDialogueChoice(choiceId),
@@ -532,29 +897,34 @@ class Application {
 
   /**
    * Choice Selection Callback: Dispatches DIALOGUE packet via wsClient.
+   * Includes turn_id to prevent STALE_CHOICE errors on server.
    */
   private handleDialogueChoice(choiceId: number): void {
-    if (this.dialoguePending) return;
     const npcId = this.activeNpcId || LAO_WANG_CONFIG.id;
-    console.log(`[Main] Dispatching DIALOGUE packet: npc_id='${npcId}', choice_id=${choiceId}`);
+    console.log(`[Main] Dispatching DIALOGUE packet: npc_id='${npcId}', choice_id=${choiceId}, turn_id='${this.activeTurnId}'`);
 
     if (this.wsClient) {
       this.wsClient.send('DIALOGUE', {
         npc_id: npcId,
         choice_id: choiceId,
-        ...(!this.isOffline() ? { turn_id: this.activeTurnId } : {}),
+        ...(this.activeTurnId ? { turn_id: this.activeTurnId } : {}),
       });
     }
   }
 
   /**
-   * Dialogue closed: restores player controls and clears active NPC.
+   * Dialogue closed: restores player controls, resets active dialogue flag and clears active NPC.
    */
   private handleDialogueClose(): void {
     console.log('[Main] Dialogue overlay closed. Restoring player movement.');
+    this.isDialogueActive = false;
     this.setModalActive(false);
     this.activeNpcId = null;
-    this.requestedNpc = null;
+    this.activeTurnId = null;
+    if (this.speechDismissTimeout !== null) {
+      window.clearTimeout(this.speechDismissTimeout);
+      this.speechDismissTimeout = null;
+    }
   }
 
   /**
@@ -579,22 +949,10 @@ class Application {
   }
 
   /**
-   * Evaluates distance between player, Lao Wang (110.0, 0.0, 109.5), and Antique Teapot (110.0, 0.9, 108.5).
+   * Evaluates distance between player, Lao Wang (100.0, 0.0, 124.0), and Antique Teapot (99.2, 0.9, 124.3).
    * Toggles interaction prompt [F] or [E] without collision.
    */
-  private isOffline(): boolean { return !!this.mockServer || !!this.wsClient?.getMockServer(); }
-
   public checkProximity(pos: { x: number; y: number; z: number }): void {
-    if (!this.isOffline()) {
-      if (this.isModalActive) { this.hideInteractionPrompt(); return; }
-      const npc = this.serverWorld.nearest('npcs', pos.x, pos.z);
-      const item = this.serverWorld.nearest('items', pos.x, pos.z);
-      if (npc) this.showInteractionPrompt('F', `Поговорить: ${npc.id}${item ? ' · E: осмотреть предмет' : ''}`);
-      else if (item) this.showInteractionPrompt('E', `Осмотреть: ${item.id}`);
-      else this.hideInteractionPrompt();
-      return;
-    }
-
     if (
       this.isModalActive ||
       (this.dialogueUI && this.dialogueUI.isOpen()) ||
@@ -608,27 +966,15 @@ class Application {
       return;
     }
 
-    // Check proximity to original 5_5 landmark OR new central pink square landmark
+    // Both interactables live at the central pavilion, matching the server.
     const dxLao = pos.x - LAO_WANG_CONFIG.worldPosition.x;
     const dzLao = pos.z - LAO_WANG_CONFIG.worldPosition.z;
-    const distSqLao1 = dxLao * dxLao + dzLao * dzLao;
-
-    const dxLao2 = pos.x - LAO_WANG_CONFIG.centralPosition.x;
-    const dzLao2 = pos.z - LAO_WANG_CONFIG.centralPosition.z;
-    const distSqLao2 = dxLao2 * dxLao2 + dzLao2 * dzLao2;
-
-    const distSqLao = Math.min(distSqLao1, distSqLao2);
+    const distSqLao = dxLao * dxLao + dzLao * dzLao;
     const isNearLao = distSqLao <= LAO_WANG_CONFIG.interactionRadiusSq;
 
     const dxTea = pos.x - TEAPOT_CONFIG.worldPosition.x;
     const dzTea = pos.z - TEAPOT_CONFIG.worldPosition.z;
-    const distSqTea1 = dxTea * dxTea + dzTea * dzTea;
-
-    const dxTea2 = pos.x - TEAPOT_CONFIG.centralPosition.x;
-    const dzTea2 = pos.z - TEAPOT_CONFIG.centralPosition.z;
-    const distSqTea2 = dxTea2 * dxTea2 + dzTea2 * dzTea2;
-
-    const distSqTea = Math.min(distSqTea1, distSqTea2);
+    const distSqTea = dxTea * dxTea + dzTea * dzTea;
     const isNearTea = distSqTea <= TEAPOT_CONFIG.interactionRadiusSq;
 
     this.isNearLaoWang = isNearLao;
@@ -679,15 +1025,8 @@ class Application {
   }
 
   public handleInteractKey(event?: KeyboardEvent): void {
-    if (!this.isOffline()) {
-      if (this.isModalActive || this.dialoguePending) return;
-      const pos = this.playerController.getPosition();
-      const npc = this.serverWorld.nearest('npcs', pos.x, pos.z);
-      if (npc) { event?.preventDefault(); this.requestedNpc = npc.id; this.wsClient.send('DIALOGUE', { npc_id: npc.id }); }
-      return;
-    }
-
     if (
+      this.editorState.isEditor() ||
       this.isModalActive ||
       (this.dialogueUI && this.dialogueUI.isOpen()) ||
       (this.quizPanel && this.quizPanel.isOpen())
@@ -696,15 +1035,9 @@ class Application {
     }
 
     const pos = this.playerController.getPosition();
-    const dx1 = pos.x - LAO_WANG_CONFIG.worldPosition.x;
-    const dz1 = pos.z - LAO_WANG_CONFIG.worldPosition.z;
-    const distSq1 = dx1 * dx1 + dz1 * dz1;
-
-    const dx2 = pos.x - LAO_WANG_CONFIG.centralPosition.x;
-    const dz2 = pos.z - LAO_WANG_CONFIG.centralPosition.z;
-    const distSq2 = dx2 * dx2 + dz2 * dz2;
-
-    const distSq = Math.min(distSq1, distSq2);
+    const dx = pos.x - LAO_WANG_CONFIG.worldPosition.x;
+    const dz = pos.z - LAO_WANG_CONFIG.worldPosition.z;
+    const distSq = dx * dx + dz * dz;
 
     if (distSq <= LAO_WANG_CONFIG.interactionRadiusSq) {
       if (event) {
@@ -716,15 +1049,8 @@ class Application {
   }
 
   public handleTeapotKey(event?: KeyboardEvent): void {
-    if (!this.isOffline()) {
-      if (this.isModalActive) return;
-      const pos = this.playerController.getPosition();
-      const item = this.serverWorld.nearest('items', pos.x, pos.z);
-      if (item) { event?.preventDefault(); this.wsClient.send('INSPECT', { item_id: item.id }); }
-      return;
-    }
-
     if (
+      this.editorState.isEditor() ||
       this.isModalActive ||
       (this.dialogueUI && this.dialogueUI.isOpen()) ||
       (this.quizPanel && this.quizPanel.isOpen())
@@ -733,15 +1059,9 @@ class Application {
     }
 
     const pos = this.playerController.getPosition();
-    const dx1 = pos.x - TEAPOT_CONFIG.worldPosition.x;
-    const dz1 = pos.z - TEAPOT_CONFIG.worldPosition.z;
-    const distSq1 = dx1 * dx1 + dz1 * dz1;
-
-    const dx2 = pos.x - TEAPOT_CONFIG.centralPosition.x;
-    const dz2 = pos.z - TEAPOT_CONFIG.centralPosition.z;
-    const distSq2 = dx2 * dx2 + dz2 * dz2;
-
-    const distSq = Math.min(distSq1, distSq2);
+    const dx = pos.x - TEAPOT_CONFIG.worldPosition.x;
+    const dz = pos.z - TEAPOT_CONFIG.worldPosition.z;
+    const distSq = dx * dx + dz * dz;
 
     if (distSq <= TEAPOT_CONFIG.interactionRadiusSq) {
       if (event) {
@@ -757,9 +1077,11 @@ class Application {
    */
   public triggerLaoWangDialogue(): void {
     console.log('[Main] Opening Lao Wang dialogue via [F] interaction.');
+    this.isDialogueActive = true;
 
     // 1. MockServer instance
     if (this.mockServer) {
+      this.mockServer.setAsyncDelivery(true);
       this.mockServer.triggerLaoWangGreeting();
       return;
     }
@@ -767,16 +1089,23 @@ class Application {
     // 2. WSClient Mock mode
     const clientMock = this.wsClient?.getMockServer?.();
     if (clientMock) {
+      clientMock.setAsyncDelivery(true);
       clientMock.triggerLaoWangGreeting();
       return;
     }
 
-    // 3. Live WebSocket server
+    // 3. Live WebSocket server.
+    // Start/reopen the dialogue without choice_id: the server generates (or
+    // resends) the current turn and returns it together with a fresh turn_id.
     if (this.wsClient && this.wsClient.isConnected) {
-      this.requestedNpc = LAO_WANG_CONFIG.id;
       this.wsClient.send('DIALOGUE', {
         npc_id: LAO_WANG_CONFIG.id,
       });
+
+      // If we already received recent speech from syncScenes, show it immediately
+      if (this.lastNpcSpeech[LAO_WANG_CONFIG.id]) {
+        this.openInteractiveDialogue(this.lastNpcSpeech[LAO_WANG_CONFIG.id]);
+      }
       return;
     }
 
@@ -788,8 +1117,6 @@ class Application {
    * Opens Antique Teapot inspection quiz overlay via [E] interaction.
    */
   public triggerTeapotInspection(): void {
-    if (!this.isOffline()) { this.wsClient.send('INSPECT', { item_id: TEAPOT_CONFIG.itemId }); return; }
-
     console.log('[Main] Opening Antique Teapot Quiz via [E] interaction.');
 
     this.setModalActive(true);
@@ -815,11 +1142,6 @@ class Application {
   }
 
   private handleQuizAnswer(optionId: number, wordId: string): void {
-    if (!this.isOffline()) {
-      if (this.activeQuizId) this.wsClient.send('INSPECT', { item_id: this.activeQuizItem, answer_id: optionId, quiz_id: this.activeQuizId });
-      return;
-    }
-
     console.log(`[Main] Quiz answer submitted: optionId=${optionId}, wordId=${wordId}`);
 
     if (this.wsClient && this.wsClient.isConnected) {
@@ -910,39 +1232,93 @@ class Application {
     }
 
     // 2. Update Controllers & Simulations
-    // Sync obstacle collision bounding boxes from active world chunks (excluding player spawn area)
-    const walls = this.world.getWallBoundingBoxes?.() ?? [];
-    this.playerController.setObstacles(walls);
+    const isEditor = this.editorState.isEditor();
+    let viewX: number;
+    let viewY: number;
+    let viewZ: number;
 
-    this.playerController.update(delta);
-    const pos = this.playerController.getPosition();
+    if (isEditor) {
+      // --- EDITOR MODE ---
+      if (this.levelEditor) {
+        this.levelEditor.update(delta);
+      } else {
+        this.editorCamera.update(delta);
+        if (this.ghostBeacon) {
+          this.ghostBeacon.update(delta);
+        }
+      }
+      const camPos = this.editorCamera.getPosition();
+      viewX = camPos.x;
+      viewY = camPos.y;
+      viewZ = camPos.z;
+
+      this.hideInteractionPrompt();
+    } else {
+      // --- GAME MODE ---
+      // Sync obstacle collision bounding boxes from active world chunks (cached, only recomputed when chunks load/unload)
+      const walls = this.world.getWallBoundingBoxes?.() ?? [];
+      if (walls !== this.lastSyncedObstacles) {
+        this.lastSyncedObstacles = walls;
+        this.playerController.setObstacles(walls);
+      }
+
+      this.playerController.update(delta);
+      const pos = this.playerController.getPosition();
+      viewX = pos.x;
+      viewY = pos.y;
+      viewZ = pos.z;
+
+      // 3. Evaluate NPC Proximity & Interaction Prompt
+      this.checkNpcProximity(pos);
+
+      // 5. Transmit Player Position at ~20 Hz
+      this.transmitPositionIfNeeded(delta);
+    }
+
     this.otherPlayerManager.update(delta);
-    this.world.update(delta, pos.x, pos.z);
 
-    // 3. Evaluate NPC Proximity & Interaction Prompt
-    this.checkNpcProximity(pos);
+    // Dynamic Chunk Streaming (Feature F5) around active viewpoint (camera in editor, player in game)
+    this.world.update(delta, viewX, viewZ);
 
     // 4. Render 3D Scene
     this.world.render();
 
-    // 5. Transmit Player Position at ~20 Hz
-    this.transmitPositionIfNeeded(delta);
-
     // 6. Update Real-Time HUD Overlay Every Frame
-    const cachePercent = this.isOffline() ? this.world.getCachePercentage() : this.serverWorld.dataPercent;
-    const chunkCount = this.isOffline() ? this.world.getLoadedChunksCount() : this.serverWorld.count;
+    const cachePercent = this.world.getCachePercentage?.() ?? 9;
+    const chunkCount = this.world.getLoadedChunksCount?.() ?? this.world.getLoadedChunkCount?.() ?? 9;
 
-    this.hud.update(
-      this.currentFps,
-      cachePercent,
-      chunkCount,
-      pos.x,
-      pos.z,
-      this.playerBalance
-    );
+    if (isEditor) {
+      if (this.editorCoordsEl) {
+        this.editorCoordsEl.textContent = `(${viewX.toFixed(1)}, ${viewY.toFixed(1)}, ${viewZ.toFixed(1)})`;
+      }
+      if (this.editorSpeedEl) {
+        this.editorSpeedEl.textContent = `${this.editorCamera.getSpeed().toFixed(1)} m/s`;
+      }
+      this.hud.update(
+        this.currentFps,
+        cachePercent,
+        chunkCount,
+        viewX,
+        viewZ,
+        this.playerBalance
+      );
+    } else {
+      this.hud.update(
+        this.currentFps,
+        cachePercent,
+        chunkCount,
+        viewX,
+        viewZ,
+        this.playerBalance
+      );
+    }
   }
 
   private transmitPositionIfNeeded(delta: number): void {
+    if (this.editorState.isEditor()) {
+      return;
+    }
+
     if (!this.wsClient || !this.wsClient.isConnected) {
       return;
     }
@@ -970,6 +1346,26 @@ class Application {
       this.lastSentZ = pos.z;
       this.lastSentRotation = rot;
     }
+  }
+
+  public getEditorState(): EditorStateManager {
+    return this.editorState;
+  }
+
+  public getLevelEditor(): LevelEditor {
+    return this.levelEditor;
+  }
+
+  public getEditorCamera(): EditorCamera {
+    return this.editorCamera;
+  }
+
+  public getGhostBeacon(): PlayerGhostBeacon | null {
+    return this.ghostBeacon;
+  }
+
+  public getWorld(): World {
+    return this.world;
   }
 
   // Public Inspection Accessors

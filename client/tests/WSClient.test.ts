@@ -167,7 +167,7 @@ describe('Networking & WSClient Test Suite', () => {
       expect(speech!.emotion).toBe('HAPPY');
       expect(speech!.mianzi).toBe(50); // initial 40 + 10
       expect(speech!.aggro).toBe(10);  // initial 20 - 10
-      expect(speech!.choices.length).toBeGreaterThan(0);
+      expect(speech!.choices?.length).toBeGreaterThan(0);
 
       client.disconnect();
     });

@@ -15,6 +15,7 @@ Coverage:
 
 import asyncio
 import os
+os.environ.setdefault("TTS_ENGINE", "formant")
 import sys
 import unittest
 from unittest.mock import patch, AsyncMock
@@ -2091,6 +2092,245 @@ class TestTokenSanitizerDefense(unittest.IsolatedAsyncioTestCase):
             for t in tokens:
                 self.assertIn(t["id"], self.catalog_words)
                 self.assertNotIn(t["id"], ["word_dragon_slayer", "word_potion"])
+
+
+# ============================================================================
+# Tier 5: Milestone 1 Dialogue Audio & LLM Endpoint Integration Tests
+# ============================================================================
+
+class TestDialogueAudioIntegration(unittest.IsolatedAsyncioTestCase):
+    """Verifies TTS audio synthesis integration in POST /dialogue."""
+
+    async def asyncSetUp(self):
+        self.transport = httpx.ASGITransport(app=app)
+        self.client = httpx.AsyncClient(transport=self.transport, base_url="http://test")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_01_dialogue_returns_valid_audio_base64(self):
+        """POST /dialogue returns audio_base64 starting with UklGR in both parsed payload and top level."""
+        payload = {
+            "npc_id": "lao_wang",
+            "player_message": "老板好，我来看看玉。",
+            "context": {"price": 800, "price_floor": 120, "mianzi": 50, "aggro": 0},
+        }
+        resp = await self.client.post("/dialogue", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+
+        # Check parsed envelope contains audio_base64
+        self.assertIn("parsed", data)
+        parsed = data["parsed"]
+        self.assertIn("audio_base64", parsed)
+        self.assertIsNotNone(parsed["audio_base64"])
+        self.assertTrue(len(parsed["audio_base64"]) > 100)
+        # RIFF header in base64 starts with UklGR
+        self.assertTrue(parsed["audio_base64"].startswith("UklGR"))
+
+        # Check top level audio_base64 matches
+        self.assertEqual(data.get("audio_base64"), parsed["audio_base64"])
+
+    async def test_02_dialogue_audio_is_valid_wav_pcm(self):
+        """Audio payload is valid 16kHz 16-bit Mono PCM WAV with standard RIFF header."""
+        import base64
+        import wave
+        import io
+
+        payload = {
+            "npc_id": "chef_chen",
+            "player_message": "老板，来一碗担担面！",
+            "context": {"price": 25, "price_floor": 25, "mianzi": 50, "aggro": 0},
+        }
+        resp = await self.client.post("/dialogue", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        b64_audio = resp.json()["parsed"]["audio_base64"]
+
+        raw_wav = base64.b64decode(b64_audio)
+        self.assertTrue(raw_wav.startswith(b"RIFF"))
+        self.assertEqual(raw_wav[8:12], b"WAVE")
+        self.assertEqual(raw_wav[12:16], b"fmt ")
+
+        with wave.open(io.BytesIO(raw_wav), "rb") as wf:
+            self.assertEqual(wf.getnchannels(), 1)
+            self.assertEqual(wf.getsampwidth(), 2)
+            self.assertEqual(wf.getframerate(), 16000)
+            self.assertGreater(wf.getnframes(), 0)
+
+    async def test_03_dialogue_tts_failure_does_not_break_response(self):
+        """If TTS synthesis raises an exception, dialogue still succeeds with audio_base64=None."""
+        import ai.middleware
+
+        payload = {
+            "npc_id": "guard_zhang",
+            "player_message": "警官好，这是我的证件。",
+            "context": {"price": 0, "price_floor": 0, "mianzi": 50, "aggro": 0},
+        }
+
+        with patch.object(
+            ai.middleware,
+            "synthesize_to_base64",
+            side_effect=RuntimeError("Simulated audio engine hardware error"),
+        ):
+            resp = await self.client.post("/dialogue", json=payload)
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertIsNone(data["parsed"]["audio_base64"])
+            self.assertIsNone(data.get("audio_base64"))
+            self.assertEqual(len(data["choices"]), 4)
+            self.assertTrue(len(data["speech_tokens"]) >= 1)
+
+    async def test_04_dialogue_audio_for_all_known_npcs(self):
+        """Verifies audio synthesis generates non-empty audio for all 6 market personas."""
+        npcs = ["lao_wang", "auntie_li", "electronics_zhang", "chef_chen", "granny_liu", "guard_zhang"]
+        for npc in npcs:
+            payload = {"npc_id": npc, "player_message": "你好"}
+            resp = await self.client.post("/dialogue", json=payload)
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            b64 = data["parsed"]["audio_base64"]
+            self.assertIsNotNone(b64, f"NPC {npc} audio was None")
+            self.assertTrue(b64.startswith("UklGR"), f"NPC {npc} audio missing RIFF header")
+            self.assertTrue(len(b64) > 100, f"NPC {npc} audio length too short: {len(b64)}")
+
+
+class TestLLMClientEndpointsAndHealth(unittest.IsolatedAsyncioTestCase):
+    """Tests endpoint resolution and multi-path health probe in ai/llm_client.py."""
+
+    def test_01_resolve_ollama_endpoints(self):
+        from ai.llm_client import resolve_llm_endpoints, resolve_default_model
+        completions, health = resolve_llm_endpoints(ollama_url="http://host.docker.internal:11434")
+        self.assertEqual(completions, "http://host.docker.internal:11434/v1/chat/completions")
+        self.assertEqual(health, "http://host.docker.internal:11434/v1/models")
+
+        # Test model resolution when OLLAMA_URL is in env
+        with patch.dict(os.environ, {"OLLAMA_URL": "http://127.0.0.1:11434"}):
+            model = resolve_default_model()
+            self.assertEqual(model, "qwen3.5:4b")
+
+    def test_02_resolve_openai_endpoints(self):
+        from ai.llm_client import resolve_llm_endpoints
+        completions, health = resolve_llm_endpoints(openai_base_url="http://127.0.0.1:11434/v1")
+        self.assertEqual(completions, "http://127.0.0.1:11434/v1/chat/completions")
+        self.assertEqual(health, "http://127.0.0.1:11434/v1/models")
+
+    def test_03_resolve_llama_server_endpoints(self):
+        from ai.llm_client import resolve_llm_endpoints
+        completions, health = resolve_llm_endpoints(llama_server_url="http://127.0.0.1:8080/v1/chat/completions")
+        self.assertEqual(completions, "http://127.0.0.1:8080/v1/chat/completions")
+        self.assertEqual(health, "http://127.0.0.1:8080/health")
+
+    def test_04_default_endpoints_and_model(self):
+        from ai.llm_client import resolve_llm_endpoints, resolve_default_model
+        with patch.dict(os.environ, {}, clear=True):
+            completions, health = resolve_llm_endpoints()
+            self.assertEqual(completions, "http://127.0.0.1:8080/v1/chat/completions")
+            self.assertEqual(health, "http://127.0.0.1:8080/health")
+            self.assertEqual(resolve_default_model(), "unsloth/Qwen3.5-4B-MTP-GGUF:Q5_K_M")
+
+    async def test_05_check_health_probes_fallback_models(self):
+        """When /health returns 404 but /v1/models returns 200 (like Ollama), check_health returns True."""
+        from ai.llm_client import LLMClient
+
+        client = LLMClient(
+            completions_url="http://mock-ollama:11434/v1/chat/completions",
+            health_url="http://mock-ollama:11434/health",
+        )
+
+        async def mock_handler(request: httpx.Request):
+            if request.url.path == "/health":
+                return httpx.Response(404, text="Not Found")
+            elif request.url.path == "/v1/models":
+                return httpx.Response(200, json={"data": [{"id": "qwen3.5:4b"}]})
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(mock_handler)
+        with patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
+            is_healthy = await client.check_health()
+            self.assertTrue(is_healthy)
+
+
+class TestDialogueStreaming(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.transport = httpx.ASGITransport(app=app)
+        self.client = httpx.AsyncClient(transport=self.transport, base_url="http://test")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_streaming_ndjson_chunks(self):
+        payload = {
+            "npc_id": "lao_wang",
+            "player_message": "老板，这块玉太贵了！",
+            "context": {
+                "price": 800,
+                "price_floor": 120,
+                "mianzi": 50,
+                "aggro": 0,
+            },
+        }
+        resp = await self.client.post("/dialogue?stream=true", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("application/x-ndjson", resp.headers.get("content-type", ""))
+        lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
+        self.assertEqual(len(lines), 2)
+        chunk1 = json.loads(lines[0])
+        chunk2 = json.loads(lines[1])
+        self.assertEqual(chunk1.get("type"), "npc_speech")
+        self.assertTrue(len(chunk1.get("speech_tokens", [])) > 0)
+        self.assertEqual(chunk2.get("type"), "choices")
+        self.assertEqual(len(chunk2.get("choices", [])), 4)
+
+    async def test_06_check_health_probes_fallback_root(self):
+        """When /health returns 404 and /v1/models fails but / returns 200, check_health returns True."""
+        from ai.llm_client import LLMClient
+
+        client = LLMClient(
+            completions_url="http://mock-ollama:11434/v1/chat/completions",
+            health_url="http://mock-ollama:11434/health",
+        )
+
+        async def mock_handler(request: httpx.Request):
+            if request.url.path == "/":
+                return httpx.Response(200, text="Ollama is running")
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(mock_handler)
+        with patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
+            is_healthy = await client.check_health()
+            self.assertTrue(is_healthy)
+
+
+class TestDialogueStreaming(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.transport = httpx.ASGITransport(app=app)
+        self.client = httpx.AsyncClient(transport=self.transport, base_url="http://test")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_streaming_ndjson_chunks(self):
+        payload = {
+            "npc_id": "lao_wang",
+            "player_message": "老板，这块玉太贵了！",
+            "context": {
+                "price": 800,
+                "price_floor": 120,
+                "mianzi": 50,
+                "aggro": 0,
+            },
+        }
+        resp = await self.client.post("/dialogue?stream=true", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("application/x-ndjson", resp.headers.get("content-type", ""))
+        lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
+        self.assertEqual(len(lines), 2)
+        chunk1 = json.loads(lines[0])
+        chunk2 = json.loads(lines[1])
+        self.assertEqual(chunk1.get("type"), "npc_speech")
+        self.assertTrue(len(chunk1.get("speech_tokens", [])) > 0)
+        self.assertEqual(chunk2.get("type"), "choices")
+        self.assertEqual(len(chunk2.get("choices", [])), 4)
 
 
 # ============================================================================

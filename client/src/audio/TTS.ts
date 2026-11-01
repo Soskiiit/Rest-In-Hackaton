@@ -5,30 +5,6 @@
  */
 
 export class TTS {
-  private static endpoint: string | null = null;
-  private static audio: HTMLAudioElement | null = null;
-  private static audioUrl: string | null = null;
-  private static generation = 0;
-
-  public static useMiddleware(endpoint: string | null): void { TTS.stop(); TTS.endpoint = endpoint; }
-
-  private static async playMiddleware(text: string, generation: number): Promise<void> {
-    try {
-      const response = await fetch(`${TTS.endpoint}?${new URLSearchParams({ text })}`, { signal: AbortSignal.timeout(10000) });
-      if (!response.ok) throw new Error(`TTS HTTP ${response.status}`);
-      const blob = await response.blob();
-      if (generation !== TTS.generation) return;
-      TTS.audioUrl = URL.createObjectURL(blob);
-      TTS.audio = new Audio(TTS.audioUrl);
-      TTS.audio.onended = () => TTS.stop();
-      await TTS.audio.play();
-    } catch {
-      if (generation !== TTS.generation) return;
-      TTS.stop();
-      TTS.speakNative(text);
-    }
-  }
-
   /**
    * Returns true if speech synthesis is supported in the current environment.
    */
@@ -51,16 +27,9 @@ export class TTS {
       return false;
     }
 
-    if (TTS.endpoint && typeof Audio !== 'undefined') {
-      TTS.stop();
-      void TTS.playMiddleware(text, TTS.generation);
-      return true;
+    if (!TTS.isSupported()) {
+      return false;
     }
-    return TTS.speakNative(text);
-  }
-
-  private static speakNative(text: string): boolean {
-    if (!TTS.isSupported()) return false;
 
     try {
       const utterance = new window.SpeechSynthesisUtterance(text);
@@ -78,11 +47,6 @@ export class TTS {
    * Cancels any active speech synthesis output.
    */
   public static stop(): void {
-    TTS.generation++;
-    TTS.audio?.pause();
-    TTS.audio = null;
-    if (TTS.audioUrl) URL.revokeObjectURL(TTS.audioUrl);
-    TTS.audioUrl = null;
     if (TTS.isSupported()) {
       try {
         window.speechSynthesis.cancel();

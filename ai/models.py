@@ -189,6 +189,60 @@ class DialogueRequest(BaseModel):
 # Response Model
 # ============================================================================
 
+class DialogueParsed(BaseModel):
+    """
+    Inner parsed payload within DialogueResponse representing game state changes,
+    dialogue choices, speech tokens, and synthesized audio.
+    Matches the schema expected by the Go server game.AI client.
+    """
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    speech_tokens: List[SpeechToken] = Field(
+        ..., min_length=1, description="Tokenized speech for two-line subtitles"
+    )
+    tokens: Optional[List[SpeechToken]] = Field(
+        default=None, description="Direct alias for speech_tokens for Go server compatibility"
+    )
+    emotion: EmotionType = Field(
+        default="neutral", description="Emotional state for 3D character mesh animation"
+    )
+    price_new: int = Field(
+        ...,
+        ge=0,
+        le=100000,
+        description="Updated price after dialogue exchange strictly in [0, 100000]",
+    )
+    mianzi_delta: int = Field(
+        default=0, ge=-30, le=30, description="Delta applied to player's Face/Mianzi strictly in [-30, 30]"
+    )
+    aggro_delta: int = Field(
+        default=0, ge=-30, le=30, description="Delta applied to NPC's Rage/Aggro strictly in [-30, 30]"
+    )
+    fsm_state: FsmStateType = Field(
+        default="HAGGLING", description="Current FSM state"
+    )
+    choices: List[Choice] = Field(
+        ..., min_length=4, max_length=4, description="Exactly 4 dialogue response options"
+    )
+    audio_base64: Optional[str] = Field(
+        default=None, description="Base64-encoded 16 kHz 16-bit Mono PCM WAV audio"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def synchronize_tokens_input(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "tokens" in data and "speech_tokens" not in data:
+                data["speech_tokens"] = data["tokens"]
+        return data
+
+    @model_validator(mode="after")
+    def synchronize_tokens_output(self) -> "DialogueParsed":
+        if self.tokens is None or len(self.tokens) != len(self.speech_tokens):
+            self.tokens = self.speech_tokens
+        return self
+
+
 class DialogueResponse(BaseModel):
     """
     Response returned by POST /dialogue.
@@ -234,8 +288,11 @@ class DialogueResponse(BaseModel):
     raw: Optional[str] = Field(
         default=None, description="Raw text response from LLM or mock generator"
     )
-    parsed: Optional[Dict[str, Any]] = Field(
-        default=None, description="Parsed dict for compatibility with TECH.md"
+    audio_base64: Optional[str] = Field(
+        default=None, description="Base64-encoded 16 kHz 16-bit Mono PCM WAV audio"
+    )
+    parsed: Optional[Union[DialogueParsed, Dict[str, Any]]] = Field(
+        default=None, description="Parsed envelope for Go server and client consumption"
     )
 
     @model_validator(mode="before")

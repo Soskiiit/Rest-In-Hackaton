@@ -5,7 +5,7 @@
  * Verifies:
  * 1. DialogueUI Component Unit Tests (subtitles, masking, gauges, choices, keyboard, cleanup)
  * 2. Network Integration Tests (NPC_SPEECH, DIALOGUE, NPC_STATE, MockServer, modal locking)
- * 3. Proximity Detection Tests (distance to (110.0, 0, 109.5), [F] prompt visibility, boundary checks, key F)
+ * 3. Proximity Detection Tests (distance to the central pavilion (100.0, 0, 124.0), [F] prompt visibility, boundary checks, key F)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -177,6 +177,13 @@ export class MockDomElement {
         const found = child.querySelector(selector);
         if (found) return found;
       }
+    } else if (selector.startsWith('.')) {
+      const cls = selector.slice(1);
+      for (const child of this.children) {
+        if (child.classList.contains(cls)) return child;
+        const found = child.querySelector(selector);
+        if (found) return found;
+      }
     }
     return null;
   }
@@ -339,7 +346,7 @@ export function createDialogueDomFixture(): DialogueDomFixture {
 // Proximity Logic Helper
 // ============================================================================
 
-export const LAO_WANG_LANDMARK_POS = { x: 110.0, y: 0.0, z: 109.5 };
+export const LAO_WANG_LANDMARK_POS = { x: 100.0, y: 0.0, z: 124.0 };
 export const NPC_INTERACTION_RADIUS = 3.5;
 
 export function checkNpcProximity(
@@ -530,6 +537,25 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
 
       expect(buttons[3].textContent).toContain('[4]');
       expect(buttons[3].textContent).toContain('对不起，再看看。');
+    });
+
+    it('1.10b should render choices in the real server shape ({zh,py,ru})', () => {
+      const dialogue = new DialogueUI(fixture.doc as any);
+      dialogue.open({
+        ...MOCK_SPEECH_GREETING,
+        choices: [
+          { id: 1, zh: '谢谢老板！', py: 'Xièxie lǎobǎn!', ru: 'Спасибо, босс!', type: 'polite' },
+          { id: 4, zh: '我再看看', py: 'Wǒ zài kànkan', ru: 'Я еще посмотрю', type: 'leave' },
+        ],
+      });
+
+      const buttons = fixture.choices.children;
+      expect(buttons).toHaveLength(2);
+      expect(buttons[0].textContent).toContain('[1]');
+      expect(buttons[0].textContent).toContain('谢谢老板！');
+      expect(buttons[0].textContent).toContain('Спасибо, босс!');
+      expect(buttons[1].textContent).toContain('我再看看');
+      expect(buttons[1].textContent).toContain('Я еще посмотрю');
     });
 
     it('1.11 should invoke onChoice callback when a choice button is clicked', () => {
@@ -738,23 +764,23 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
   // Suite 3: Proximity Detection & Interaction Trigger
   // --------------------------------------------------------------------------
   describe('3. Proximity Detection & Interaction Trigger', () => {
-    it('3.1 should confirm Lao Wang coordinates at (110.0, 0, 109.5) and 3.5m radius', () => {
-      expect(LAO_WANG_LANDMARK_POS).toEqual({ x: 110.0, y: 0.0, z: 109.5 });
+    it('3.1 should confirm Lao Wang coordinates at the central pavilion (100, 124) and 3.5m radius', () => {
+      expect(LAO_WANG_LANDMARK_POS).toEqual({ x: 100.0, y: 0.0, z: 124.0 });
       expect(NPC_INTERACTION_RADIUS).toBe(3.5);
-      expect(LAO_WANG_CONFIG.worldPosition).toEqual({ x: 110.0, y: 0.0, z: 109.5 });
+      expect(LAO_WANG_CONFIG.worldPosition).toEqual({ x: 100.0, y: 0.0, z: 124.0 });
       expect(LAO_WANG_CONFIG.interactionRadius).toBe(3.5);
     });
 
     it('3.2 should detect player in range and reveal interaction prompt within 3.5m', () => {
-      const res1 = checkNpcProximity(110.0, 110.0);
+      const res1 = checkNpcProximity(100.0, 124.0);
       expect(res1.inRange).toBe(true);
-      expect(res1.distance).toBeCloseTo(0.5, 4);
+      expect(res1.distance).toBeCloseTo(0, 4);
 
-      const res2 = checkNpcProximity(110.0, 112.5);
+      const res2 = checkNpcProximity(100.0, 127.0);
       expect(res2.inRange).toBe(true);
       expect(res2.distance).toBeCloseTo(3.0, 4);
 
-      const res3 = checkNpcProximity(112.0, 111.5);
+      const res3 = checkNpcProximity(102.0, 125.5);
       expect(res3.inRange).toBe(true);
       expect(res3.distance).toBeLessThan(3.5);
 
@@ -769,7 +795,7 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
       expect(resSpawn.inRange).toBe(false);
       expect(resSpawn.distance).toBeGreaterThan(13.0);
 
-      const resFar = checkNpcProximity(110.0, 114.0);
+      const resFar = checkNpcProximity(100.0, 128.5);
       expect(resFar.inRange).toBe(false);
       expect(resFar.distance).toBeCloseTo(4.5, 4);
 
@@ -778,11 +804,11 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
     });
 
     it('3.4 should enforce boundary precision strictly at 3.500m vs 3.501m', () => {
-      const boundaryIn = checkNpcProximity(110.0, 113.0);
+      const boundaryIn = checkNpcProximity(100.0, 127.5);
       expect(boundaryIn.inRange).toBe(true);
       expect(boundaryIn.distance).toBeCloseTo(3.5, 6);
 
-      const boundaryOut = checkNpcProximity(110.0, 113.001);
+      const boundaryOut = checkNpcProximity(100.0, 127.501);
       expect(boundaryOut.inRange).toBe(false);
       expect(boundaryOut.distance).toBeGreaterThan(3.5);
     });
@@ -791,7 +817,7 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
       const dialogue = new DialogueUI(fixture.doc as any);
       let dialogueTriggered = false;
 
-      const playerPos = { x: 110.0, z: 111.0 };
+      const playerPos = { x: 100.0, z: 125.0 };
 
       const handleKey = (key: string) => {
         if ((key === 'f' || key === 'F') && !dialogue.isOpen()) {
@@ -835,7 +861,7 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
       const dialogue = new DialogueUI(fixture.doc as any);
       dialogue.open(MOCK_SPEECH_GREETING);
 
-      const playerPos = { x: 110.0, z: 110.0 };
+      const playerPos = { x: 100.0, z: 124.0 };
       const prox = checkNpcProximity(playerPos.x, playerPos.z);
 
       const shouldShowPrompt = prox.inRange && !dialogue.isOpen();
@@ -846,6 +872,109 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
       }
 
       expect(fixture.interactionPrompt.classList.contains('hidden')).toBe(true);
+    });
+  });
+
+  describe('4. Chunked & Streaming Dialogue Delivery', () => {
+    it('4.1 should render partial NPC speech immediately with loading placeholder for choices', () => {
+      const dialogue = new DialogueUI(fixture.doc as any);
+      const partialSpeech: NpcSpeechPayload = {
+        npc_id: 'lao_wang',
+        tokens: [
+          { id: 'word_hello', zh: '你好', py: 'Nǐ hǎo', ru: 'Привет' },
+          { id: 'word_friend', zh: '朋友', py: 'péngyǒu', ru: 'друг' },
+        ],
+        emotion: 'HAPPY',
+        mianzi: 65,
+        aggro: 10,
+        is_partial: true,
+      };
+
+      const knownWords = new Set(['word_hello']);
+      dialogue.renderPartialSpeech(partialSpeech, knownWords);
+
+      expect(dialogue.isOpen()).toBe(true);
+      expect(fixture.npcName.textContent).toContain('ЛАО ВАН');
+      expect(fixture.lineOriginal.textContent).toContain('你好 (Nǐ hǎo)');
+      // Both original phrase and semi-translation (with unmasked known word) appear simultaneously in partial chunk!
+      expect(fixture.lineTranslated.innerHTML).toContain('Привет');
+      expect(fixture.lineTranslated.innerHTML).toContain('<span class="masked-token">[???]</span>');
+      expect(fixture.mianziVal.textContent).toBe('65%');
+      expect(fixture.aggroVal.textContent).toBe('10%');
+
+      // Choices container contains loading indicator instead of choice buttons
+      const loader = fixture.choices.querySelector('.dialogue-choices-loading');
+      expect(loader).not.toBeNull();
+      expect(loader!.textContent).toContain('Собеседник формулирует варианты');
+    });
+
+    it('4.2 should render interactive choices when choices chunk arrives via setChoices', () => {
+      const dialogue = new DialogueUI(fixture.doc as any);
+      const partialSpeech: NpcSpeechPayload = {
+        npc_id: 'lao_wang',
+        tokens: [{ id: 'word_hello', zh: '你好', py: 'Nǐ hǎo', ru: 'Привет' }],
+        mianzi: 50,
+        aggro: 0,
+        is_partial: true,
+      };
+
+      dialogue.renderPartialSpeech(partialSpeech);
+      expect(fixture.choices.querySelector('.dialogue-choices-loading')).not.toBeNull();
+
+      // Chunk 2 arrives
+      dialogue.setChoices([
+        { id: 1, text_zh: '老板好', text_ru: 'Привет, босс' },
+        { id: 2, text_zh: '多少钱', text_ru: 'Сколько стоит' },
+      ], 'turn_123');
+
+      // Loading indicator is replaced by buttons
+      expect(fixture.choices.querySelector('.dialogue-choices-loading')).toBeNull();
+      const buttons = fixture.choices.querySelectorAll('.choice-btn');
+      expect(buttons.length).toBe(2);
+      expect(buttons[0].textContent).toContain('老板好');
+    });
+
+    it('4.3 should visually highlight selected choice and disable buttons immediately on click', () => {
+      const dialogue = new DialogueUI(fixture.doc as any);
+      const onChoice = vi.fn();
+      dialogue.open(MOCK_SPEECH_GREETING, onChoice);
+
+      const buttons = fixture.choices.querySelectorAll('.choice-btn');
+      expect(buttons.length).toBe(4);
+
+      // User clicks choice 2
+      buttons[1].dispatchEvent({ type: 'click' });
+
+      expect(onChoice).toHaveBeenCalledWith(2);
+      expect(buttons[1].classList.contains('selected')).toBe(true);
+      expect(buttons[0].classList.contains('disabled')).toBe(true);
+      expect(buttons[1].classList.contains('disabled')).toBe(true);
+    });
+
+    it('4.4 should handle mock streaming packets via WSClient and MockServer', () => {
+      const client = new WSClient({ mock: true });
+      let partialReceived: NpcSpeechPayload | null = null;
+      let choicesReceived: any = null;
+      let fullReceived: NpcSpeechPayload | null = null;
+
+      client.on('NPC_SPEECH_PARTIAL', (p) => { partialReceived = p; });
+      client.on('DIALOGUE_CHOICES', (c) => { choicesReceived = c; });
+      client.on('NPC_SPEECH', (s) => { fullReceived = s; });
+
+      client.connect();
+      client.send('DIALOGUE', { npc_id: 'lao_wang', choice_id: 1 });
+
+      expect(partialReceived).not.toBeNull();
+      expect(partialReceived!.npc_id).toBe('lao_wang');
+      expect(partialReceived!.choices?.length).toBe(0);
+
+      expect(choicesReceived).not.toBeNull();
+      expect(choicesReceived.choices?.length).toBeGreaterThan(0);
+
+      expect(fullReceived).not.toBeNull();
+      expect(fullReceived!.choices?.length).toBeGreaterThan(0);
+
+      client.disconnect();
     });
   });
 });

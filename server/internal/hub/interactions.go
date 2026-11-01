@@ -80,13 +80,64 @@ func (h *Hub) dialogue(c *client, raw []byte) {
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
-		ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
+		ctx, cancel := context.WithTimeout(c.ctx, 45*time.Second)
 		defer cancel()
-		reply, err := h.ai.RequestScene(ctx, relation, text, scene.History)
+		var streamPartialReceived bool
+		var deliveredPartial game.PartialReply
+		reply, err := h.ai.RequestSceneStream(ctx, relation, text, scene.History, func(partial game.PartialReply) {
+			if c.ctx.Err() != nil {
+				return
+			}
+			streamPartialReceived = true
+			deliveredPartial = partial
+			partEvt := aiPartial{c: c, scene: scene, relation: relation, partial: partial}
+			select {
+			case h.events <- partEvt:
+			case <-c.done:
+			case <-h.done:
+			}
+		})
 		fallback := err != nil
 		if fallback {
 			log.Printf("AI fallback npc=%s: %v", npc.ID, err)
-			reply = game.Fallback(relation, choice, h.catalog)
+			fbReply := game.Fallback(relation, choice, h.catalog)
+			if streamPartialReceived && len(deliveredPartial.Tokens) > 0 {
+				// Preserve the partial speech the player already saw/heard! Do not wipe it out with fallback text!
+				reply = game.Reply{
+					Tokens:      deliveredPartial.Tokens,
+					Emotion:     deliveredPartial.Emotion,
+					Price:       deliveredPartial.Price,
+					MianziDelta: deliveredPartial.MianziDelta,
+					AggroDelta:  deliveredPartial.AggroDelta,
+					State:       deliveredPartial.State,
+					Choices:     fbReply.Choices,
+					AudioBase64: deliveredPartial.AudioBase64,
+				}
+			} else {
+				reply = fbReply
+				if c.ctx.Err() == nil {
+					partEvt := aiPartial{
+						c:        c,
+						scene:    scene,
+						relation: relation,
+						partial: game.PartialReply{
+							Tokens:      reply.Tokens,
+							Emotion:     reply.Emotion,
+							Price:       reply.Price,
+							MianziDelta: reply.MianziDelta,
+							AggroDelta:  reply.AggroDelta,
+							State:       reply.State,
+							AudioBase64: reply.AudioBase64,
+						},
+					}
+					select {
+					case h.events <- partEvt:
+					case <-c.done:
+					case <-h.done:
+					}
+					time.Sleep(800 * time.Millisecond)
+				}
+			}
 		}
 		reply = game.Enforce(reply, relation, choice, npc)
 		if c.ctx.Err() != nil {
@@ -145,7 +196,22 @@ func (h *Hub) finishDialogue(e aiDone) {
 	c.turn = turnID(s)
 	c.activeNPC = relation.NPCID
 	c.choices = append([]game.Choice{}, e.reply.Choices...)
-	speech := Speech{NPCID: relation.NPCID, PlayerID: c.player.ID, Tokens: e.reply.Tokens, Choices: c.choices, TurnID: c.turn, Emotion: e.reply.Emotion, Mianzi: relation.Mianzi, Aggro: relation.Aggro, Price: relation.Price, State: relation.State, Fallback: e.fallback, Offers: h.offers(relation.NPCID), SceneVersion: shared.Version}
+	speech := Speech{
+		NPCID:        relation.NPCID,
+		PlayerID:     c.player.ID,
+		Tokens:       e.reply.Tokens,
+		Choices:      c.choices,
+		TurnID:       c.turn,
+		Emotion:      e.reply.Emotion,
+		Mianzi:       relation.Mianzi,
+		Aggro:        relation.Aggro,
+		Price:        relation.Price,
+		State:        relation.State,
+		Fallback:     e.fallback,
+		Offers:       h.offers(relation.NPCID),
+		SceneVersion: shared.Version,
+		AudioBase64:  e.reply.AudioBase64,
+	}
 	for _, observer := range h.nearby(npc.X, npc.Z, speechRadius) {
 		if !game.Near(observer.player.X, observer.player.Z, npc.X, npc.Z, speechRadius) {
 			continue
@@ -159,6 +225,51 @@ func (h *Hub) finishDialogue(e aiDone) {
 		observer.speech = &view
 		h.sendSpeech(observer, view)
 		h.emit(observer, "NPC_STATE", h.state(s))
+		if len(view.Choices) > 0 && view.TurnID != "" {
+			h.emit(observer, "DIALOGUE_CHOICES", map[string]any{
+				"npc_id":  view.NPCID,
+				"turn_id": view.TurnID,
+				"choices": view.Choices,
+			})
+		}
+	}
+}
+func (h *Hub) partialDialogue(e aiPartial) {
+	c := e.c
+	s := h.scenes[e.scene.NPCID]
+	if s == nil || s.owner != c {
+		return
+	}
+	npc := h.catalog.NPCs[e.relation.NPCID]
+	if !game.Near(c.player.X, c.player.Z, npc.X, npc.Z, 5) {
+		return
+	}
+	newMianzi := game.Clamp(e.relation.Mianzi+e.partial.MianziDelta, 0, 100)
+	newAggro := game.Clamp(e.relation.Aggro+e.partial.AggroDelta, 0, 100)
+	price := e.partial.Price
+	if price == 0 {
+		price = e.relation.Price
+	}
+	partialSpeech := Speech{
+		NPCID:       e.relation.NPCID,
+		PlayerID:    c.player.ID,
+		Tokens:      e.partial.Tokens,
+		Choices:     []game.Choice{},
+		TurnID:      "",
+		Emotion:     e.partial.Emotion,
+		Mianzi:      newMianzi,
+		Aggro:       newAggro,
+		Price:       price,
+		State:       e.partial.State,
+		AudioBase64: e.partial.AudioBase64,
+	}
+	for _, observer := range h.nearby(npc.X, npc.Z, speechRadius) {
+		if !game.Near(observer.player.X, observer.player.Z, npc.X, npc.Z, speechRadius) {
+			continue
+		}
+		view := partialSpeech
+		view.Tokens = game.Filter(view.Tokens, observer.known)
+		h.emit(observer, "NPC_SPEECH_PARTIAL", view)
 	}
 }
 func (h *Hub) sendSpeech(c *client, s Speech) {

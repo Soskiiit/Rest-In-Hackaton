@@ -218,11 +218,7 @@ def format_prompt(
     safe_mapping = SafeContextDict(active_ctx, defaults=merged_defaults)
 
     try:
-        result = template.format_map(safe_mapping)
-        # These fields must reach every persona, including templates without placeholders.
-        shared = ctx_dict.get("scene_history") or []
-        kind = ctx_dict.get("npc_kind") or "merchant"
-        return result + "\nNPC kind: " + str(kind) + "\nShared scene history: " + json.dumps(shared, ensure_ascii=False)
+        return template.format_map(safe_mapping)
     except Exception as e:
         logger.error("Failed to format prompt for '%s': %s", clean_id, e)
         raise ValueError(f"Failed to format prompt for NPC '{clean_id}': {e}") from e

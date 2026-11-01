@@ -16,6 +16,7 @@ export interface PlayerControllerConfig {
   playerRadius: number;
   damping: number; // friction/damping factor
   spawnPosition: { x: number; y: number; z: number };
+  spawnYaw?: number; // initial yaw rotation in radians
   jumpSpeed?: number;
   gravity?: number;
 }
@@ -33,6 +34,7 @@ export const DEFAULT_PLAYER_CONFIG: PlayerControllerConfig = {
   playerRadius: 0.5,
   damping: 12.0,
   spawnPosition: { x: 100, y: 0, z: 66 },
+  spawnYaw: 0, // Faces North into the market corridor (+Z towards crossroads and plazas)
   jumpSpeed: 7.5,
   gravity: 20.0,
 };
@@ -83,9 +85,10 @@ export class PlayerController {
       this.config.spawnPosition.z
     );
 
-    // Initial camera position & orientation
+    // Initial camera position & orientation (spawnYaw allows 180 deg turnaround)
     this.camera.position.set(this.position.x, this.position.y + this.config.eyeHeight, this.position.z);
-    this.euler.setFromQuaternion(this.camera.quaternion);
+    this.euler.set(0, this.config.spawnYaw ?? 0, 0, 'YXZ');
+    this.camera.quaternion.setFromEuler(this.euler);
 
     // Bind event listeners
     this.bindEvents();
@@ -157,10 +160,47 @@ export class PlayerController {
     window.addEventListener('keyup', this.onKeyUp);
   }
 
-  private onClick = (): void => {
-    if (!this.isInputLocked && !this.isPointerLocked) {
-      this.domElement.requestPointerLock();
+  private isMenuOrModalOpen(): boolean {
+    if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return false;
+    const authEl = document.getElementById('auth-overlay');
+    if (authEl && !authEl.classList?.contains('hidden')) return true;
+
+    const dialogueEl = document.getElementById('dialogue-overlay');
+    if (dialogueEl && !dialogueEl.classList?.contains('hidden')) return true;
+
+    const quizEl = document.getElementById('quiz-overlay');
+    if (quizEl && !quizEl.classList?.contains('hidden')) return true;
+
+    return false;
+  }
+
+  private onClick = (event?: MouseEvent | any): void => {
+    if (this.isInputLocked || this.isPointerLocked) return;
+
+    if (event?.target && typeof event.target.closest === 'function') {
+      const target = event.target as HTMLElement;
+      if (
+        target.closest('#auth-overlay') ||
+        target.closest('.auth-overlay') ||
+        target.closest('#dialogue-overlay') ||
+        target.closest('.dialogue-overlay') ||
+        target.closest('#quiz-overlay') ||
+        target.closest('.quiz-overlay') ||
+        target.closest('#logout-btn') ||
+        target.closest('button') ||
+        target.closest('input') ||
+        target.closest('textarea') ||
+        target.closest('select') ||
+        target.closest('a') ||
+        target.closest('label')
+      ) {
+        return;
+      }
     }
+
+    if (this.isMenuOrModalOpen()) return;
+
+    this.domElement.requestPointerLock();
   };
 
   private onPointerLockChange = (): void => {
@@ -273,7 +313,7 @@ export class PlayerController {
    * Requests browser pointer lock on the controller's DOM element.
    */
   public requestPointerLock(): void {
-    if (!this.isInputLocked) {
+    if (!this.isInputLocked && !this.isMenuOrModalOpen()) {
       this.domElement.requestPointerLock();
     }
   }
@@ -292,6 +332,30 @@ export class PlayerController {
    */
   public getCamera(): THREE.PerspectiveCamera {
     return this.camera;
+  }
+
+  /**
+   * Resets camera position to player eye height and syncs orientation cleanly.
+   * Restores yaw/pitch without snapping or disorientation.
+   */
+  public resetCameraToPlayer(yaw?: number, pitch: number = 0): void {
+    this.camera.position.set(this.position.x, this.position.y + this.config.eyeHeight, this.position.z);
+    this.camera.rotation.order = 'YXZ';
+    if (yaw !== undefined) {
+      this.euler.set(pitch, yaw, 0, 'YXZ');
+      this.camera.quaternion.setFromEuler(this.euler);
+    } else {
+      this.euler.setFromQuaternion(this.camera.quaternion, 'YXZ');
+    }
+  }
+
+  /**
+   * Directly sets look yaw and pitch orientation.
+   */
+  public setRotation(yaw: number, pitch: number = 0): void {
+    this.euler.set(pitch, yaw, 0, 'YXZ');
+    this.camera.rotation.order = 'YXZ';
+    this.camera.quaternion.setFromEuler(this.euler);
   }
 
   /**
