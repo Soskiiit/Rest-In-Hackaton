@@ -4,6 +4,7 @@
   "forward": "+Z (customer side)",
   "origin": "cart centre, ground",
   "rig": "rigid node hierarchy; no skinning",
+  "colors": "vertex COLOR_0, three materials: paint / glass / cloth",
   "clips": {
     "Idle": 4,
     "Roll": 2,
@@ -12,9 +13,10 @@
   "models": [
     {
       "file": "cart_banh_mi.glb",
-      "bytes": 140360,
-      "triangles": 4268,
-      "nodes": 116,
+      "bytes": 99496,
+      "triangles": 764,
+      "draw_calls": 9,
+      "nodes": 17,
       "animations": [
         "Idle",
         "Roll",
@@ -23,9 +25,10 @@
     },
     {
       "file": "cart_thai_noodle.glb",
-      "bytes": 175248,
-      "triangles": 4416,
-      "nodes": 117,
+      "bytes": 125040,
+      "triangles": 932,
+      "draw_calls": 12,
+      "nodes": 24,
       "animations": [
         "Idle",
         "Roll",

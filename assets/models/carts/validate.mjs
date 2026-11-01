@@ -26,7 +26,7 @@ for(const entry of manifest.models){
       assert.equal(count%3,0);triangles+=count/3;
     }
   }
-  assert.equal(triangles,entry.triangles);assert(triangles<=6000);assert(bytes.length<1_000_000);
+  assert.equal(triangles,entry.triangles);assert(triangles<=1000);assert(bytes.length<1_000_000);
   for(const anim of doc.animations){
     const targets=new Set();
     for(const channel of anim.channels){
