@@ -1,0 +1,28 @@
+{
+  "file": "chicken_animated.glb",
+  "source_sha256": "7d6bbb1c4ef38c52dfd0807864d8c8c9522092c11ce41b704fbaa75dc657202e",
+  "bytes": 656788,
+  "triangles": 3470,
+  "bones": 12,
+  "height_m": 0.6,
+  "accessory": "head-bound pixel sunglasses",
+  "gait": "planted feet travel toward -Z; swing feet toward +Z",
+  "units": "meters",
+  "forward": "+Z",
+  "up": "+Y",
+  "root_motion": false,
+  "clips": {
+    "Run": {
+      "duration": 0.72,
+      "loop": true
+    },
+    "Peck": {
+      "duration": 2.4,
+      "loop": false
+    },
+    "PanicRun": {
+      "duration": 0.52,
+      "loop": true
+    }
+  }
+}
