@@ -102,6 +102,7 @@ export interface NpcSpeechPayload {
   emotion?: string; // "NEUTRAL" | "HAPPY" | "ANGRY" | "FURIOUS"
   mianzi: number;  // Respect meter: 0..100
   aggro: number;   // Aggro / Rage meter: 0..100
+  stall_closed?: boolean;
   price?: number;
   audio_base64?: string; // Base64-encoded WAV audio from AI TTS
   turn_id?: string;      // Turn token for STALE_CHOICE guard
@@ -124,6 +125,8 @@ export interface NpcStatePayload {
   state: string;
   mianzi: number;
   aggro: number;
+  personal_aggro?: number;
+  stall_closed?: boolean;
 }
 
 export interface WordLearnedPayload {

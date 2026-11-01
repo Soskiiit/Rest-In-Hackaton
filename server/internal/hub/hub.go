@@ -68,6 +68,7 @@ type Speech struct {
 	Emotion      string        `json:"emotion"`
 	Mianzi       int           `json:"mianzi"`
 	Aggro        int           `json:"aggro"`
+	StallClosed  bool          `json:"stall_closed"`
 	Price        int           `json:"price"`
 	State        string        `json:"state"`
 	Fallback     bool          `json:"fallback"`

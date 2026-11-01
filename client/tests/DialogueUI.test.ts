@@ -431,6 +431,15 @@ describe('Milestone M3 Test Suite: DialogueUI & Proximity System', () => {
       expect(fixture.npcName.textContent).toBe('ЛАО ВАН (老王)');
     });
 
+    it('shows and clears the personal stall closure without disabling dialogue', () => {
+      const dialogue = new DialogueUI(fixture.doc as any);
+      dialogue.open({ ...MOCK_SPEECH_GREETING, stall_closed: true });
+      expect(fixture.npcName.textContent).toContain('ПРИЛАВОК ЗАКРЫТ ДЛЯ ВАС');
+      expect(dialogue.isOpen()).toBe(true);
+      dialogue.updateStallClosed(false);
+      expect(fixture.npcName.textContent).toBe('ЛАО ВАН (老王)');
+    });
+
     it('1.3 should correctly render Line 1 with Chinese characters and Pinyin', () => {
       const dialogue = new DialogueUI(fixture.doc as any);
       dialogue.open(MOCK_SPEECH_GREETING);

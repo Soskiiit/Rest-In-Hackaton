@@ -50,7 +50,12 @@ func (h *Hub) tradeStart(c *client, raw []byte) {
 		h.fail(c, "DIALOGUE_REQUIRED")
 		return
 	}
-	if s.data.State == "AGGRO" || s.data.Aggro > 75 {
+	relation, err := h.store.Relation(h.ctx, c.player.ID, npc.ID, npc.Price, npc.Floor)
+	if err != nil {
+		h.fail(c, "DB_ERROR")
+		return
+	}
+	if relation.Aggro > 75 {
 		h.fail(c, "NPC_AGGRO")
 		return
 	}
@@ -123,7 +128,12 @@ func (h *Hub) calculator(c *client, raw []byte) {
 		h.fail(c, "STALE_TRADE")
 		return
 	}
-	if s.data.State == "AGGRO" || s.data.Aggro > 75 {
+	relation, err := h.store.Relation(h.ctx, c.player.ID, npc.ID, npc.Price, npc.Floor)
+	if err != nil {
+		h.fail(c, "DB_ERROR")
+		return
+	}
+	if relation.Aggro > 75 {
 		c.trade = nil
 		h.fail(c, "NPC_AGGRO")
 		return
@@ -155,7 +165,7 @@ func (h *Hub) calculator(c *client, raw []byte) {
 	h.purchaseResult(c, receipt, replayed)
 	if current, err := h.getScene(npc.ID); err == nil {
 		for _, observer := range h.nearby(npc.X, npc.Z, speechRadius) {
-			h.emit(observer, "NPC_STATE", h.state(current))
+			h.emit(observer, "NPC_STATE", h.state(current, observer))
 			h.emit(observer, "PURCHASE", map[string]any{"player_id": c.player.ID, "npc_id": npc.ID, "item_id": receipt.ItemID, "amount": receipt.Amount})
 		}
 	}
@@ -186,9 +196,9 @@ func (h *Hub) rejectPrice(c *client, s *liveScene, amount int) error {
 	if err != nil {
 		return err
 	}
-	r := s.data.Relation
-	r.PlayerID = c.player.ID
-	r.History = personal.History
+	r := personal
+	r.Price = s.data.Price
+	r.Floor = s.data.Floor
 	choice := game.Choice{Type: "provoke"}
 	reply := game.Fallback(r, &choice, h.catalog)
 	text := fmt.Sprintf("Предложение цены %d юаней", amount)

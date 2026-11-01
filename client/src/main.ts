@@ -1039,11 +1039,16 @@ class Application {
   private handleNpcState(payload: NpcStatePayload): void {
     console.log(`[Main] NPC_STATE received: mianzi=${payload.mianzi}, aggro=${payload.aggro}, state=${payload.state}`);
 
-    if (this.dialogueUI && this.dialogueUI.isOpen()) {
+    if (typeof payload.stall_closed === 'boolean') {
+      this.world.setMerchantClosed(payload.npc_id, payload.stall_closed);
+    }
+    const aggro = payload.personal_aggro ?? payload.aggro;
+    if (this.dialogueUI && this.dialogueUI.isOpen() && this.activeNpcId === payload.npc_id) {
+      this.dialogueUI.updateStallClosed?.(payload.stall_closed ?? false);
       if (typeof this.dialogueUI.updateState === 'function') {
-        this.dialogueUI.updateState(payload.mianzi, payload.aggro);
+        this.dialogueUI.updateState(payload.mianzi, aggro);
       } else if (typeof (this.dialogueUI as any).updateGauges === 'function') {
-        (this.dialogueUI as any).updateGauges(payload.mianzi, payload.aggro);
+        (this.dialogueUI as any).updateGauges(payload.mianzi, aggro);
       }
 
       // If state signifies dialogue conclusion
