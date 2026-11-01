@@ -12,7 +12,8 @@ for(const entry of manifest.models){
   const jsonLength=bytes.readUInt32LE(12);
   const doc=JSON.parse(bytes.subarray(20,20+jsonLength).toString());
   assert.equal(doc.asset.version,'2.0');
-  assert.deepEqual(doc.animations.map(a=>a.name),Object.keys(manifest.clips));
+  assert.deepEqual(doc.animations.map(a=>a.name),entry.animations);
+  assert(entry.animations.every(name=>name in manifest.clips));
   assert(!doc.extensionsRequired?.length);
   assert(!doc.buffers.some(b=>b.uri));
   assert(!doc.images?.length);
@@ -26,7 +27,7 @@ for(const entry of manifest.models){
       assert.equal(count%3,0);triangles+=count/3;
     }
   }
-  assert.equal(triangles,entry.triangles);assert(triangles<=1000);assert(bytes.length<1_000_000);
+  assert.equal(triangles,entry.triangles);assert(triangles<=1000);assert.equal(doc.meshes.length,entry.draw_calls);assert(entry.draw_calls<=16);assert(bytes.length<1_000_000);
   for(const anim of doc.animations){
     const targets=new Set();
     for(const channel of anim.channels){
@@ -40,7 +41,11 @@ for(const entry of manifest.models){
       assert.equal(input.max[0],manifest.clips[anim.name]);
     }
   }
-  console.log(entry.file+': '+triangles+' triangles, '+bytes.length+' bytes; Khronos validator: 0 errors, 0 warnings');
-  const infos=result.issues.messages.filter(m=>m.severity>1);
+  const slots=doc.nodes.filter(n=>n.name.startsWith('Slot_'));
+  assert.equal(slots.length,entry.slots);
+  assert(slots.every(n=>n.mesh===undefined&&!n.children));
+  // Slot_* anchors are intentionally empty nodes.
+  const infos=result.issues.messages.filter(m=>m.severity>1&&!(m.code==='NODE_EMPTY'&&doc.nodes[+m.pointer.split('/')[2]].name.startsWith('Slot_')));
+  console.log(entry.file+': '+triangles+' triangles, '+entry.draw_calls+' draw calls, '+slots.length+' slots, '+bytes.length+' bytes; Khronos validator: 0 errors, 0 warnings');
   if(infos.length)console.log('Info:',JSON.stringify(infos));
 }

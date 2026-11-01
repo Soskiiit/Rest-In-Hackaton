@@ -1,0 +1,66 @@
+{
+  "units": "meters",
+  "up": "+Y",
+  "forward": "+Z (customer side)",
+  "origin": "model centre, ground",
+  "rig": "rigid node hierarchy; no skinning",
+  "colors": "vertex COLOR_0, materials: paint / glass / cloth",
+  "slots": "empty nodes Slot_<group>_<n>: bottom centre of an item placed on that surface",
+  "clips": {
+    "Idle": 4,
+    "Roll": 2,
+    "Open": 1.5,
+    "Close": 1.5
+  },
+  "models": [
+    {
+      "file": "cart_jianbing.glb",
+      "bytes": 90228,
+      "triangles": 712,
+      "draw_calls": 7,
+      "nodes": 12,
+      "slots": 0,
+      "animations": [
+        "Idle",
+        "Roll",
+        "Open"
+      ]
+    },
+    {
+      "file": "cart_tanghulu.glb",
+      "bytes": 105792,
+      "triangles": 830,
+      "draw_calls": 8,
+      "nodes": 14,
+      "slots": 0,
+      "animations": [
+        "Idle",
+        "Roll",
+        "Open"
+      ]
+    },
+    {
+      "file": "stall_pavilion.glb",
+      "bytes": 71344,
+      "triangles": 566,
+      "draw_calls": 5,
+      "nodes": 19,
+      "slots": 10,
+      "animations": [
+        "Idle",
+        "Close"
+      ]
+    },
+    {
+      "file": "stall_awning.glb",
+      "bytes": 63736,
+      "triangles": 514,
+      "draw_calls": 4,
+      "nodes": 13,
+      "slots": 6,
+      "animations": [
+        "Idle"
+      ]
+    }
+  ]
+}
