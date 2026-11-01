@@ -102,8 +102,8 @@ func (s *Store) Buy(ctx context.Context, player int64, trade, npc, item string, 
 	// Lock order is always NPC -> wallet. Re-check receipts after waiting for locks.
 	var current int64
 	var state string
-	var aggro, floor int
-	err = tx.QueryRowContext(ctx, "SELECT version,state,aggro,price_floor FROM npc_scenes WHERE npc_id=$1 FOR UPDATE", npc).Scan(&current, &state, &aggro, &floor)
+	var floor int
+	err = tx.QueryRowContext(ctx, "SELECT version,state,price_floor FROM npc_scenes WHERE npc_id=$1 FOR UPDATE", npc).Scan(&current, &state, &floor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Receipt{}, false, ErrTrade
 	}
@@ -131,7 +131,12 @@ func (s *Store) Buy(ctx context.Context, player int64, trade, npc, item string, 
 	if current != version {
 		return Receipt{}, false, ErrStale
 	}
-	if state == "IDLE" || state == "CALLING" || state == "AGGRO" || aggro > 75 || amount < floor {
+	var personalAggro int
+	err = tx.QueryRowContext(ctx, "SELECT aggro FROM npc_relations WHERE npc_id=$1 AND player_id=$2", npc, player).Scan(&personalAggro)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Receipt{}, false, err
+	}
+	if state == "IDLE" || state == "CALLING" || personalAggro > 75 || amount < floor {
 		return Receipt{}, false, ErrTrade
 	}
 	var owned bool

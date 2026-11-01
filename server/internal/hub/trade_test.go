@@ -280,3 +280,88 @@ func TestScenarioFallbacksAndGuardRules(t *testing.T) {
 		t.Fatalf("guard accepted bribe: %+v", guard.data)
 	}
 }
+
+// The shared scene must not transfer a player's personal ban to another player.
+func TestMerchantClosureIsPersonalAndPersists(t *testing.T) {
+	h, a, b := tradeHarness(t)
+	completeTurn(t, h, a, "lao_wang", 0)
+	s, err := h.getScene("lao_wang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	relation, err := h.store.Relation(h.ctx, a.player.ID, "lao_wang", 800, 120)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		aggro  int
+		closed bool
+	}{{99, false}, {100, true}, {99, false}} {
+		relation.Aggro = tc.aggro
+		if err := h.store.SaveRelation(h.ctx, relation); err != nil {
+			t.Fatal(err)
+		}
+		view := h.state(s, a)
+		if view["personal_aggro"] != tc.aggro || view["stall_closed"] != tc.closed {
+			t.Fatalf("personal state at %d: %+v", tc.aggro, view)
+		}
+		if h.state(s, b)["stall_closed"] != false {
+			t.Fatal("other player was blocked")
+		}
+	}
+	relation.Aggro = 100
+	if err := h.store.SaveRelation(h.ctx, relation); err != nil {
+		t.Fatal(err)
+	}
+	s.data.State, s.data.Aggro = "AGGRO", 100
+	if _, err := h.store.SQL.ExecContext(h.ctx, "UPDATE npc_scenes SET state='AGGRO',aggro=100 WHERE npc_id='lao_wang'"); err != nil {
+		t.Fatal(err)
+	}
+	h.tradeStart(a, data(map[string]any{"npc_id": "lao_wang", "item_id": "jade_amulet"}))
+	requireError(t, a, "NPC_AGGRO")
+	trade := openTrade(t, h, b, "lao_wang", "jade_amulet")
+	confirm(h, b, trade, 150)
+	if b.trade != nil {
+		t.Fatal("unaffected player could not buy")
+	}
+	player, err := h.store.Player(h.ctx, b.player.ID)
+	if err != nil || player.Balance != 350 {
+		t.Fatalf("purchase: %+v %v", player, err)
+	}
+	delete(h.scenes, "lao_wang")
+	s, err = h.getScene("lao_wang")
+	if err != nil || h.state(s, a)["stall_closed"] != true {
+		t.Fatal("closure lost after reload")
+	}
+	relation.Aggro = 75
+	if err := h.store.SaveRelation(h.ctx, relation); err != nil {
+		t.Fatal(err)
+	}
+	openTrade(t, h, a, "lao_wang", "jade_amulet")
+}
+
+func TestPendingTradeBlockedWhenPersonalAggroChanges(t *testing.T) {
+	h, a, _ := tradeHarness(t)
+	completeTurn(t, h, a, "lao_wang", 0)
+	pending := openTrade(t, h, a, "lao_wang", "jade_amulet")
+	relation, err := h.store.Relation(h.ctx, a.player.ID, "lao_wang", 800, 120)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relation.Aggro = 100
+	if err = h.store.SaveRelation(h.ctx, relation); err != nil {
+		t.Fatal(err)
+	}
+	confirm(h, a, pending, 150)
+	requireError(t, a, "NPC_AGGRO")
+	if a.trade != nil {
+		t.Fatal("blocked offer remains active")
+	}
+	if _, _, err = h.store.Buy(h.ctx, a.player.ID, "bypass", "lao_wang", "jade_amulet", 150, pending.Version); err != db.ErrTrade {
+		t.Fatalf("transaction allowed blocked purchase: %v", err)
+	}
+	player, err := h.store.Player(h.ctx, a.player.ID)
+	if err != nil || player.Balance != 500 {
+		t.Fatalf("balance changed: %+v %v", player, err)
+	}
+}

@@ -15,7 +15,7 @@ func (h *Hub) effective(c *client, npc string, mianzi, aggro int) (int, int) {
 
 // stateFor is NPC_STATE as seen by one player.
 func (h *Hub) stateFor(c *client, s *liveScene) map[string]any {
-	state := h.state(s)
+	state := h.state(s, c)
 	state["mianzi"], state["aggro"] = h.effective(c, s.data.NPCID, s.data.Mianzi, s.data.Aggro)
 	return state
 }

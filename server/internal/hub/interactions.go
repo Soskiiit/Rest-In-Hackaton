@@ -66,10 +66,9 @@ func (h *Hub) dialogue(c *client, raw []byte) {
 		h.fail(c, "DB_ERROR")
 		return
 	}
-	history := relation.History
-	relation = s.data.Relation
-	relation.PlayerID = c.player.ID
-	relation.History = history
+	// Dialogue uses the actor's persistent relationship, while price stays shared.
+	relation.Price = s.data.Price
+	relation.Floor = s.data.Floor
 	// The NPC answers this player in the mood it has towards them (shared mood + admin offset).
 	relation.Mianzi, relation.Aggro = h.effective(c, npc.ID, relation.Mianzi, relation.Aggro)
 	c.pending = true
@@ -221,6 +220,11 @@ func (h *Hub) finishDialogue(e aiDone) {
 			continue
 		}
 		view := speech
+		personalState := h.state(s, observer)
+		if aggro, ok := personalState["personal_aggro"].(int); ok {
+			view.Aggro = aggro
+		}
+		view.StallClosed, _ = personalState["stall_closed"].(bool)
 		// All nearby participants may choose the current shared turn.
 		if !game.Near(observer.player.X, observer.player.Z, npc.X, npc.Z, interactionRadius) {
 			view.Choices = []game.Choice{}
@@ -272,6 +276,11 @@ func (h *Hub) partialDialogue(e aiPartial) {
 			continue
 		}
 		view := partialSpeech
+		if observer != c {
+			if aggro, ok := h.state(s, observer)["personal_aggro"].(int); ok {
+				view.Aggro = aggro
+			}
+		}
 		view.Tokens = game.Filter(view.Tokens, observer.known)
 		view.Mianzi, view.Aggro = h.effective(observer, view.NPCID, view.Mianzi, view.Aggro)
 		h.emit(observer, "NPC_SPEECH_PARTIAL", view)

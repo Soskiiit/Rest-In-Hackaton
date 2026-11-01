@@ -68,6 +68,9 @@ export class World {
   private lanternsGroup: THREE.Group = new THREE.Group();
   private chunkStreamer: ChunkStreamer | null = null;
   private vendorMixers: THREE.AnimationMixer[] = [];
+  private merchantClosed = false;
+  private merchantAngerTime = 0;
+  private closedSign: THREE.Sprite | null = null;
   private vendorEntries: Array<{
     root: THREE.Object3D;
     mixer?: THREE.AnimationMixer;
@@ -1208,7 +1211,37 @@ export class World {
    * 2. Only processes skeletal animation if NPC is within 35m AND approximately in front of camera view cone
    *    (dot > 0.15, ~162° view cone), or very close (< 4m) for peripheral vision.
    */
+  /** This state is local to the viewing player, never a world-wide closure. */
+  public setMerchantClosed(npcId: string, closed: boolean): void {
+    if (npcId !== 'lao_wang' || this.merchantClosed === closed) return;
+    this.merchantClosed = closed;
+    if (closed && !this.closedSign) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#641c1c';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 43px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('ДЛЯ ВАС ЗАКРЫТО', 256, 80);
+        this.closedSign = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), depthTest: false }));
+        this.closedSign.position.set(100, 2.7, 124);
+        this.closedSign.scale.set(3.2, 0.8, 1);
+        this.scene.add(this.closedSign);
+      }
+    }
+    if (this.closedSign) this.closedSign.visible = closed;
+    if (!closed) {
+      const vendor = this.vendorEntries.find((entry) => entry.isCentral);
+      if (vendor) vendor.root.rotation.z = 0;
+    }
+  }
+
   public updateVendorAnimations(delta: number): void {
+    if (this.merchantClosed) this.merchantAngerTime += delta;
     if (this.vendorEntries.length === 0) return;
 
     const camPos = this.camera.position;
@@ -1225,6 +1258,8 @@ export class World {
       if (vendor.isCentral) {
         vendor.root.visible = true;
         vendor.mixer?.update(delta);
+        // The supplied model contains only Idle and Wave: add a clear angry shake.
+        vendor.root.rotation.z = this.merchantClosed ? Math.sin(this.merchantAngerTime * 12) * 0.10 : 0;
         continue;
       }
 
@@ -1680,6 +1715,14 @@ export class World {
     // Dispose chunk streamer and all active chunks
     this.chunkStreamer?.dispose();
     this.chunkStreamer = null;
+
+    if (this.closedSign) {
+      const material = this.closedSign.material;
+      material.map?.dispose();
+      material.dispose();
+      this.scene.remove(this.closedSign);
+      this.closedSign = null;
+    }
 
     // Traverse and dispose remaining scene objects
     this.scene.traverse((obj) => {

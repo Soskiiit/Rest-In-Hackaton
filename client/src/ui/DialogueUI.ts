@@ -40,6 +40,7 @@ export interface IDialogueUI {
   refreshSubtitles(knownWords: Set<string>): void;
   updateGauges(mianzi: number, aggro: number): void;
   updateState(mianzi: number, aggro: number): void;
+  updateStallClosed?(closed: boolean): void;
   isOpen(): boolean;
   dispose(): void;
   renderPartialSpeech?(
@@ -203,6 +204,8 @@ export class DialogueUI implements IDialogueUI {
       this.npcNameEl.textContent = displayName;
     }
 
+    this.updateStallClosed(speech.stall_closed ?? false);
+
     // 2. Update State Gauges (0..100%)
     this.updateGauges(speech.mianzi ?? 50, speech.aggro ?? 0);
 
@@ -364,6 +367,13 @@ export class DialogueUI implements IDialogueUI {
   /**
    * Contract alias for updateGauges.
    */
+  public updateStallClosed(closed: boolean): void {
+    if (this.npcNameEl && this.currentSpeech) {
+      const name = NPC_NAMES[this.currentSpeech.npc_id] || this.currentSpeech.npc_id.toUpperCase();
+      this.npcNameEl.textContent = closed ? name + ' — ПРИЛАВОК ЗАКРЫТ ДЛЯ ВАС' : name;
+    }
+  }
+
   public updateState(mianzi: number, aggro: number): void {
     this.updateGauges(mianzi, aggro);
   }
