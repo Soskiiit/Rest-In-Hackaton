@@ -171,6 +171,8 @@
   },
   "profiles": {
     "business": [
+      "word_hello",
+      "word_this",
       "word_expensive",
       "word_money",
       "word_cheap",
@@ -182,12 +184,13 @@
       "word_hundred"
     ],
     "culture": [
+      "word_hello",
+      "word_this",
       "word_jade",
       "word_cup",
       "word_tea",
       "word_boss",
       "word_sorry",
-      "word_hello",
       "word_authentic"
     ]
   },

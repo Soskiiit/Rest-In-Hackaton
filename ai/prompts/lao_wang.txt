@@ -19,8 +19,10 @@
 ФОРМАТ ОТВЕТА — строго валидный JSON без markdown блоков, строго в формате:
 {{
   "speech_tokens": [
-    {{"zh": "这是", "py": "Zhè shì", "ru": "Это", "id": "word_this"}},
-    {{"zh": "正宗的", "py": "zhèngzōng de", "ru": "настоящий", "id": "word_authentic"}}
+    {{"zh": "你好", "py": "nǐ hǎo", "ru": "здравствуйте", "id": "word_hello"}},
+    {{"zh": "这是", "py": "Zhè shì", "ru": "это", "id": "word_this"}},
+    {{"zh": "正宗的", "py": "zhèngzōng de", "ru": "настоящий", "id": "word_authentic"}},
+    {{"zh": "玉", "py": "yù", "ru": "нефрит", "id": "word_jade"}}
   ],
   "emotion": "neutral",
   "price_new": {price},
@@ -34,3 +36,15 @@
     {{"id": 4, "zh": "我再想想", "py": "Wǒ zài xiǎngxiang", "ru": "Дай подумаю", "type": "leave"}}
   ]
 }}
+
+ВАЖНО ДЛЯ speech_tokens:
+Используй ТОЛЬКО следующие разрешенные слова из каталога:
+- word_hello: {{"zh": "你好", "py": "nǐ hǎo", "ru": "здравствуйте", "id": "word_hello"}}
+- word_this: {{"zh": "这是", "py": "Zhè shì", "ru": "это", "id": "word_this"}}
+- word_authentic: {{"zh": "正宗的", "py": "zhèngzōng de", "ru": "настоящий", "id": "word_authentic"}}
+- word_jade: {{"zh": "玉", "py": "yù", "ru": "нефрит", "id": "word_jade"}}
+- word_expensive: {{"zh": "太贵了", "py": "Tài guì le", "ru": "слишком дорого", "id": "word_expensive"}}
+- word_cheap: {{"zh": "便宜", "py": "piányi", "ru": "дёшево", "id": "word_cheap"}}
+- word_money: {{"zh": "钱", "py": "qián", "ru": "деньги", "id": "word_money"}}
+- word_boss: {{"zh": "老板", "py": "lǎobǎn", "ru": "босс", "id": "word_boss"}}
+- word_hundred: {{"zh": "百", "py": "bǎi", "ru": "сто", "id": "word_hundred"}}

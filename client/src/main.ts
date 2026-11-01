@@ -103,9 +103,9 @@ class Application {
   private fpsAccumulator = 0;
   private currentFps = 60;
 
-  // Player Telemetry & Vocabulary
+  // Player Telemetry & Vocabulary (Universal starter survival words: 你好, 这是)
   private playerBalance = 500;
-  private knownWords = new Set<string>();
+  private knownWords = new Set<string>(['word_hello', 'word_this']);
 
   // Obstacle Collision Caching
   private lastSyncedObstacles: any = null;
@@ -206,6 +206,21 @@ class Application {
     // 3. NPC Speech: Trigger Dialogue Overlay (Stage 3)
     client.on('NPC_SPEECH', (payload: NpcSpeechPayload) => {
       this.handleNpcSpeech(payload);
+    });
+
+    // 3a. Dialogue Pending: NPC is thinking / generating response
+    client.on('DIALOGUE_PENDING', (payload: any) => {
+      this.handleDialoguePending(payload);
+    });
+
+    // 3b. NPC Speech Partial: First chunk containing NPC reply and audio
+    client.on('NPC_SPEECH_PARTIAL', (payload: NpcSpeechPayload) => {
+      this.handleNpcSpeechPartial(payload);
+    });
+
+    // 3c. Dialogue Choices: Second chunk containing interactive choices
+    client.on('DIALOGUE_CHOICES', (payload: any) => {
+      this.handleDialogueChoices(payload);
     });
 
     // 4. NPC State: Update Mianzi / Aggro Gauges (Stage 3)
@@ -339,7 +354,7 @@ class Application {
   ): void {
     this.playerBalance = player.balance;
     this.hud.updateBalance(player.balance);
-    this.knownWords = new Set(knownWords);
+    this.knownWords = new Set([...(knownWords || []), 'word_hello', 'word_this']);
     if (moveToServerPosition) {
       const current = this.playerController.getPosition();
       this.playerController.setPosition(player.x, current.y, player.z);
@@ -388,6 +403,9 @@ class Application {
     this.wsClient = new WSClient({ mock: true });
     this.wsClient.connect();
     this.mockServer = this.wsClient.getMockServer();
+    if (this.mockServer) {
+      this.mockServer.setAsyncDelivery(true);
+    }
     this.wireNetworkHandlers(this.wsClient);
     this.hud.setWsStatus('mock');
   }
@@ -488,7 +506,111 @@ class Application {
       return;
     }
 
+    // If dialogue UI is already open and displaying progressive partial speech,
+    // do not restart TTS audio or rebuild dialogue from scratch, which would break streaming.
+    if (this.dialogueUI && this.dialogueUI.isOpen()) {
+      if (this.knownWords && typeof (this.dialogueUI as any).refreshSubtitles === 'function') {
+        (this.dialogueUI as any).refreshSubtitles(this.knownWords);
+      }
+      if (Array.isArray(payload.choices) && payload.choices.length > 0) {
+        if (typeof (this.dialogueUI as any).setChoices === 'function') {
+          (this.dialogueUI as any).setChoices(payload.choices, payload.turn_id);
+        }
+      }
+      return;
+    }
+
     this.openInteractiveDialogue(payload);
+  }
+
+  /**
+   * Inbound DIALOGUE_PENDING packet handler. Notifies UI that NPC is formulating a response.
+   */
+  private handleDialoguePending(payload: any): void {
+    console.log(`[Main] DIALOGUE_PENDING received for npc '${payload?.npc_id}'`);
+    if (this.isDialogueActive && this.dialogueUI && this.dialogueUI.isOpen()) {
+      if (typeof (this.dialogueUI as any).setPending === 'function') {
+        (this.dialogueUI as any).setPending(true, 'Собеседник думает...');
+      }
+    }
+  }
+
+  /**
+   * Inbound NPC_SPEECH_PARTIAL packet handler:
+   * First chunk containing NPC reply, subtitles, meters, and audio.
+   * Renders immediately on client while choices are still being generated!
+   */
+  private handleNpcSpeechPartial(payload: NpcSpeechPayload): void {
+    console.log(`[Main] NPC_SPEECH_PARTIAL received from '${payload.npc_id}' (${payload.tokens?.length ?? 0} tokens)`);
+    this.lastNpcSpeech[payload.npc_id] = payload;
+    this.activeNpcId = payload.npc_id;
+
+    if (!this.isDialogueActive) {
+      return;
+    }
+
+    this.playTTSAudio(payload);
+    this.setModalActive(true);
+    this.hideInteractionPrompt();
+
+    if (this.dialogueUI) {
+      if (typeof (this.dialogueUI as any).renderPartialSpeech === 'function') {
+        (this.dialogueUI as any).renderPartialSpeech(
+          payload,
+          this.knownWords,
+          (choiceId: number) => this.handleDialogueChoice(choiceId),
+          () => this.handleDialogueClose()
+        );
+      } else {
+        this.dialogueUI.open(
+          payload,
+          (choiceId: number) => this.handleDialogueChoice(choiceId),
+          () => this.handleDialogueClose(),
+          this.knownWords
+        );
+      }
+    }
+  }
+
+  /**
+   * Inbound DIALOGUE_CHOICES packet handler:
+   * Second chunk containing interactive choices for the player.
+   * Renders choice buttons and restores keyboard selection.
+   */
+  private handleDialogueChoices(payload: any): void {
+    console.log(`[Main] DIALOGUE_CHOICES received for turn '${payload?.turn_id}' with ${payload?.choices?.length ?? 0} options`);
+    if (payload?.turn_id) {
+      this.activeTurnId = payload.turn_id;
+    }
+
+    if (!this.isDialogueActive) {
+      return;
+    }
+
+    this.setModalActive(true);
+
+    if (this.dialogueUI && Array.isArray(payload?.choices)) {
+      if (typeof (this.dialogueUI as any).setChoices === 'function') {
+        (this.dialogueUI as any).setChoices(payload.choices, payload.turn_id);
+      }
+    }
+  }
+
+  private playTTSAudio(payload: NpcSpeechPayload): void {
+    if (!payload.audio_base64) return;
+    try {
+      const binary = atob(payload.audio_base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.play().catch((err) => console.warn('[Main] TTS audio play failed:', err));
+      console.log(`[Main] Playing TTS audio (${bytes.length} bytes) for NPC '${payload.npc_id}'`);
+    } catch (err) {
+      console.warn('[Main] Failed to decode/play TTS audio:', err);
+    }
   }
 
   private openInteractiveDialogue(payload: NpcSpeechPayload): void {
@@ -496,7 +618,7 @@ class Application {
     const isInteractive = hasChoices && Boolean(payload.turn_id);
 
     // 1. Only activate UI modal lock (frees mouse pointer, suspends WASD) if there are interactive choices!
-    if (isInteractive) {
+    if (isInteractive || payload.is_partial) {
       this.setModalActive(true);
     } else {
       this.setModalActive(false);
@@ -506,21 +628,7 @@ class Application {
     this.hideInteractionPrompt();
 
     // 3. Play TTS audio from AI service (Base64 WAV)
-    if (payload.audio_base64) {
-      try {
-        const binary = atob(payload.audio_base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const blob = new Blob([bytes], { type: 'audio/wav' });
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.onended = () => URL.revokeObjectURL(url);
-        audio.play().catch((err) => console.warn('[Main] TTS audio play failed:', err));
-        console.log(`[Main] Playing TTS audio (${bytes.length} bytes) for NPC '${payload.npc_id}'`);
-      } catch (err) {
-        console.warn('[Main] Failed to decode/play TTS audio:', err);
-      }
-    }
+    this.playTTSAudio(payload);
 
     // 4. Open DialogueUI
     this.dialogueUI.open(
@@ -715,6 +823,7 @@ class Application {
 
     // 1. MockServer instance
     if (this.mockServer) {
+      this.mockServer.setAsyncDelivery(true);
       this.mockServer.triggerLaoWangGreeting();
       return;
     }
@@ -722,6 +831,7 @@ class Application {
     // 2. WSClient Mock mode
     const clientMock = this.wsClient?.getMockServer?.();
     if (clientMock) {
+      clientMock.setAsyncDelivery(true);
       clientMock.triggerLaoWangGreeting();
       return;
     }
