@@ -7,6 +7,8 @@ import (
 	"hackaton/server/internal/testdb"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -30,11 +32,15 @@ type harness struct {
 
 func start(t *testing.T, path, aiURL string, options ...func(*game.AI)) *harness {
 	t.Helper()
+	return startIn(t, "../../world/chunks", path, aiURL, options...)
+}
+func startIn(t *testing.T, worldDir, path, aiURL string, options ...func(*game.AI)) *harness {
+	t.Helper()
 	c, err := game.LoadCatalog("../../world/catalog.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := game.LoadWorld("../../world/chunks", c)
+	w, err := game.LoadWorld(worldDir, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,6 +482,96 @@ func TestPublicPlayerAndWorldEdit(t *testing.T) {
 				}
 				break
 			}
+		}
+	}
+}
+
+// copyWorld gives a test its own chunk files to edit.
+func copyWorld(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	entries, err := os.ReadDir("../../world/chunks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join("../../world/chunks", entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(dir, entry.Name()), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+func TestWorldEditAppliesWithoutRestart(t *testing.T) {
+	dir := copyWorld(t)
+	f := startIn(t, dir, testdb.New(t), "http://127.0.0.1:1")
+	a := dial(t, f, account(t, f, "alice", "business"))
+	until(t, a, "WELCOME")
+	b := dial(t, f, account(t, f, "boris", "culture"))
+	until(t, b, "WELCOME")
+	until(t, a, "PLAYER_JOIN")
+	until(t, b, "PLAYER_JOIN")
+	move(t, a, 100, 125, 0) // next to Lao Wang at (100,124)
+
+	// The level editor moves Lao Wang to (110,130) and saves chunk 5_6.
+	raw, err := os.ReadFile(filepath.Join(dir, "5_6.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chunk game.Chunk
+	json.Unmarshal(raw, &chunk)
+	chunk.NPCs = []game.NPCRef{{ID: "lao_wang", X: 10, Z: 10}}
+	raw, _ = json.Marshal(chunk)
+	if err = os.WriteFile(filepath.Join(dir, "5_6.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	send(t, a, "WORLD_EDIT", map[string]any{"chunk_ids": []string{"5_6"}})
+
+	// The author gets the fresh chunk without reconnecting: CHUNK_UNLOAD, then CHUNK_LOAD with the new place.
+	unloaded := false
+	a.SetReadDeadline(time.Now().Add(4 * time.Second))
+	for {
+		var p hub.Packet
+		if err := a.ReadJSON(&p); err != nil {
+			t.Fatal(err)
+		}
+		if p.Type == "CHUNK_UNLOAD" && bytes.Contains(p.Payload, []byte(`"5_6"`)) {
+			unloaded = true
+		}
+		if p.Type == "CHUNK_LOAD" && bytes.Contains(p.Payload, []byte(`"chunk_id":"5_6"`)) {
+			var fresh game.Chunk
+			json.Unmarshal(p.Payload, &fresh)
+			if !unloaded || len(fresh.NPCs) != 1 || fresh.NPCs[0].X != 10 {
+				t.Fatalf("stale chunk re-sent (unloaded=%v): %s", unloaded, p.Payload)
+			}
+			break
+		}
+	}
+	until(t, b, "WORLD_EDIT")
+
+	send(t, a, "DIALOGUE", map[string]any{"npc_id": "lao_wang"})
+	errorCode(t, a, "NPC_OUT_OF_RANGE") // Lao Wang is no longer here
+	move(t, a, 110, 129, 0)
+	send(t, a, "DIALOGUE", map[string]any{"npc_id": "lao_wang"})
+	until(t, a, "DIALOGUE_PENDING") // and talks at his new place
+
+	// A broken file is rejected; the world and the other player stay untouched.
+	if err = os.WriteFile(filepath.Join(dir, "5_6.json"), []byte("{broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	send(t, a, "WORLD_EDIT", map[string]any{"chunk_ids": []string{"5_6"}})
+	errorCode(t, a, "INVALID_WORLD_EDIT")
+	b.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	for {
+		var p hub.Packet
+		if err := b.ReadJSON(&p); err != nil {
+			break // nothing more for boris
+		}
+		if p.Type == "WORLD_EDIT" {
+			t.Fatal("rejected WORLD_EDIT was relayed")
 		}
 	}
 }

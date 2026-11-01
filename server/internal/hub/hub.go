@@ -118,7 +118,7 @@ type Hub struct {
 
 func New(s *db.Store, w *game.World, c *game.Catalog, ai *game.AI) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &Hub{store: s, world: w, catalog: c, ai: ai, events: make(chan any, 512), stop: make(chan struct{}), done: make(chan struct{}), ctx: ctx, cancel: cancel, clients: map[int64]*client{}}
+	h := &Hub{store: s, world: w, catalog: w.PlaceCatalog(c), ai: ai, events: make(chan any, 512), stop: make(chan struct{}), done: make(chan struct{}), ctx: ctx, cancel: cancel, clients: map[int64]*client{}}
 	go h.run()
 	return h
 }
@@ -361,6 +361,26 @@ func (h *Hub) visibility() {
 	}
 }
 
+// applyWorldEdit moves NPCs and items to their new places and re-sends the changed chunks
+// to everyone who has them loaded, so nobody has to reconnect.
+func (h *Hub) applyWorldEdit(ids []string) {
+	h.catalog = h.world.PlaceCatalog(h.catalog)
+	for _, c := range h.clients {
+		stale := []string{}
+		for _, id := range ids {
+			if c.loaded[id] {
+				stale = append(stale, id)
+				delete(c.loaded, id)
+			}
+		}
+		if len(stale) > 0 {
+			h.emit(c, "CHUNK_UNLOAD", map[string]any{"chunk_ids": stale})
+		}
+		h.stream(c)
+		h.syncScenes(c)
+	}
+}
+
 // publicPlayer is what other players may see: the wallet stays private (BALANCE/WELCOME go to the owner only).
 func publicPlayer(p db.Player) map[string]any {
 	return map[string]any{"id": p.ID, "login": p.Login, "profile": p.Profile, "x": p.X, "z": p.Z, "rotation": p.Rotation}
@@ -454,6 +474,12 @@ func (h *Hub) handle(c *client, p Packet) {
 				return
 			}
 		}
+		if err := h.world.Reload(v.ChunkIDs, h.catalog); err != nil {
+			log.Printf("WORLD_EDIT from %s rejected: %v", c.player.Login, err)
+			h.fail(c, "INVALID_WORLD_EDIT")
+			return
+		}
+		h.applyWorldEdit(v.ChunkIDs)
 		for _, other := range h.clients {
 			if other != c {
 				h.emit(other, "WORLD_EDIT", map[string]any{"chunk_ids": v.ChunkIDs, "player_id": c.player.ID, "login": c.player.Login})

@@ -143,6 +143,9 @@ export interface ChunkLoadPayload {
   objects?: any[];
   lanterns?: Array<{ x: number; y: number; z: number }>;
   npc_id?: string;
+  /** Coordinates are local to the chunk (0–20); add (xIndex*20, zIndex*20) for world space. */
+  npcs?: Array<{ npc_id: string; x: number; y: number; z: number }>;
+  items?: Array<{ item_id: string; x: number; y: number; z: number }>;
 }
 
 export interface ChunkUnloadPayload {

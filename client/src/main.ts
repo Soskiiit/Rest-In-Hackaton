@@ -37,6 +37,7 @@ import {
   WelcomePayload,
   WordLearnedPayload,
   WorldEditPayload,
+  ChunkLoadPayload,
 } from './net/types';
 
 // Network & Transmission Configuration
@@ -77,6 +78,15 @@ export const TEAPOT_CONFIG = {
     { id: 4, text: 'Тарелка', correct: false },
   ],
 };
+
+/**
+ * Interaction points follow the server: when the level editor moves an NPC or item, the client prompt
+ * moves by the same offset from the place the server catalog puts it by default (server/world/catalog.json).
+ */
+const INTERACTION_ANCHORS = [
+  { kind: 'npc', id: 'lao_wang', config: LAO_WANG_CONFIG, serverHome: { x: 100, z: 124 }, clientHome: { ...LAO_WANG_CONFIG.worldPosition } },
+  { kind: 'item', id: 'teapot', config: TEAPOT_CONFIG, serverHome: { x: 101, z: 124 }, clientHome: { ...TEAPOT_CONFIG.worldPosition } },
+] as const;
 
 class Application {
   private world!: World;
@@ -407,6 +417,11 @@ class Application {
       this.otherPlayerManager.removePlayer(payload.player_id);
     });
 
+    // 7. Чанки от сервера: где сейчас стоят Лао Ван и чайник (после правок редактора — на новом месте)
+    client.on('CHUNK_LOAD', (payload: ChunkLoadPayload) => {
+      this.applyServerPlacements(payload);
+    });
+
     // 7a. Другой игрок сохранил правки в редакторе уровней: перечитываем эти чанки
     client.on('WORLD_EDIT', (payload: WorldEditPayload) => {
       void this.levelEditor.reloadChunks(payload.chunk_ids).then((reloaded) => {
@@ -508,6 +523,32 @@ class Application {
       client.disconnect();
       this.hud.setWsStatus('disconnected');
       return false;
+    }
+  }
+
+  /**
+   * Moves the Lao Wang / teapot interaction points to where the server's chunk says they stand.
+   * If their chunk arrives without them (removed in the editor), the prompt is disabled.
+   */
+  private applyServerPlacements(chunk: ChunkLoadPayload): void {
+    const [cx, cz] = chunk.chunk_id.split('_').map(Number);
+    if (!Number.isInteger(cx) || !Number.isInteger(cz)) return;
+    for (const anchor of INTERACTION_ANCHORS) {
+      const ref =
+        anchor.kind === 'npc'
+          ? chunk.npcs?.find((n) => n.npc_id === anchor.id)
+          : chunk.items?.find((i) => i.item_id === anchor.id);
+      const { config } = anchor;
+      if (ref) {
+        config.worldPosition.x = anchor.clientHome.x + (cx * 20 + ref.x - anchor.serverHome.x);
+        config.worldPosition.z = anchor.clientHome.z + (cz * 20 + ref.z - anchor.serverHome.z);
+        config.chunkCoord.cx = cx;
+        config.chunkCoord.cz = cz;
+      } else if (config.chunkCoord.cx === cx && config.chunkCoord.cz === cz && (chunk.npcs || chunk.items)) {
+        // NaN makes every distance check fail: nothing to talk to or inspect here any more.
+        config.worldPosition.x = NaN;
+        config.worldPosition.z = NaN;
+      }
     }
   }
 
