@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { ChunkBuilder } from '../engine/ChunkBuilder';
 import { SCENE_COLORS } from '../engine/colors';
 
@@ -12,6 +13,50 @@ const MARKET_MODELS = [
   { id: 'market_cart_tanghulu', name: 'Тележка: танхулу (Tanghulu Cart)', file: 'cart_tanghulu', size: [1.97, 2.09, 1.0] },
   { id: 'market_stall_pavilion', name: 'Прилавок-павильон (Pavilion Stall)', file: 'stall_pavilion', size: [2.0, 2.91, 1.3] },
   { id: 'market_stall_awning', name: 'Прилавок под тентом (Awning Stall)', file: 'stall_awning', size: [2.0, 2.33, 1.2] },
+] as const;
+
+/**
+ * Small item props from assets/models/market_goods — tableware, food, everyday objects.
+ * Sizes from manifest.json dimensions_m (x, y, z). Displayed at counter-top scale.
+ */
+const MARKET_GOODS_MODELS = [
+  // tableware
+  { id: 'mg_teapot',    name: 'Чайник (Teapot)',           file: 'teapot',    size: [0.28, 0.17, 0.16], wordId: 'word_teapot' },
+  { id: 'mg_cup',       name: 'Чашка (Cup)',                file: 'cup',       size: [0.12, 0.06, 0.09], wordId: 'word_cup' },
+  { id: 'mg_bowl',      name: 'Миска (Bowl)',               file: 'bowl',      size: [0.20, 0.09, 0.20], wordId: 'word_bowl' },
+  { id: 'mg_chopsticks',name: 'Палочки (Chopsticks)',       file: 'chopsticks',size: [0.05, 0.01, 0.25], wordId: 'word_chopsticks' },
+  { id: 'mg_spoon',     name: 'Ложка (Spoon)',              file: 'spoon',     size: [0.04, 0.02, 0.18], wordId: 'word_spoon' },
+  // food
+  { id: 'mg_tea',       name: 'Чай листовой (Tea)',         file: 'tea',       size: [0.13, 0.12, 0.11], wordId: 'word_tea' },
+  { id: 'mg_noodles',   name: 'Лапша (Noodles)',            file: 'noodles',   size: [0.18, 0.10, 0.18], wordId: 'word_noodles' },
+  { id: 'mg_rice',      name: 'Рис (Rice)',                 file: 'rice',      size: [0.16, 0.08, 0.16], wordId: undefined },
+  { id: 'mg_baozi',     name: 'Паровой пирожок (Baozi)',    file: 'baozi',     size: [0.10, 0.08, 0.10], wordId: undefined },
+  { id: 'mg_apple',     name: 'Яблоко (Apple)',             file: 'apple',     size: [0.09, 0.09, 0.09], wordId: undefined },
+  { id: 'mg_banana',    name: 'Банан (Banana)',             file: 'banana',    size: [0.18, 0.06, 0.07], wordId: undefined },
+  { id: 'mg_tomato',    name: 'Помидор (Tomato)',           file: 'tomato',    size: [0.10, 0.09, 0.10], wordId: undefined },
+  { id: 'mg_carrot',    name: 'Морковь (Carrot)',           file: 'carrot',    size: [0.09, 0.06, 0.27], wordId: undefined },
+  { id: 'mg_cucumber',  name: 'Огурец (Cucumber)',          file: 'cucumber',  size: [0.07, 0.06, 0.22], wordId: undefined },
+  { id: 'mg_egg',       name: 'Яйцо (Egg)',                 file: 'egg',       size: [0.06, 0.08, 0.06], wordId: undefined },
+  // everyday
+  { id: 'mg_bottle',    name: 'Бутылка (Bottle)',           file: 'bottle',    size: [0.08, 0.25, 0.08], wordId: undefined },
+  { id: 'mg_umbrella',  name: 'Зонт (Umbrella)',            file: 'umbrella',  size: [0.93, 0.97, 0.93], wordId: undefined },
+  { id: 'mg_backpack',  name: 'Рюкзак (Backpack)',          file: 'backpack',  size: [0.30, 0.39, 0.27], wordId: undefined },
+  { id: 'mg_hat',       name: 'Шляпа (Hat)',                file: 'hat',       size: [0.48, 0.14, 0.48], wordId: undefined },
+  { id: 'mg_shoes',     name: 'Обувь (Shoes)',              file: 'shoes',     size: [0.26, 0.09, 0.25], wordId: undefined },
+] as const;
+
+/**
+ * Comical vendor NPC variants — animated characters with Idle/Wave/Angry/Walk clips.
+ * Scale from manifest where non-uniform.
+ */
+const COMICAL_VENDOR_MODELS = [
+  { id: 'npc_vendor_green',  name: 'Торговец Зелёный (Green)',        file: 'vendor_green',  scale: [1.00, 1.00, 1.00] as const },
+  { id: 'npc_vendor_blue',   name: 'Торговец Синий (Blue Bun)',        file: 'vendor_blue',   scale: [0.92, 1.10, 0.96] as const },
+  { id: 'npc_vendor_yellow', name: 'Торговец Жёлтый (Yellow)',        file: 'vendor_yellow', scale: [1.08, 0.91, 1.04] as const },
+  { id: 'npc_vendor_vest',   name: 'Торговец Седой (Grey Vest)',       file: 'vendor_vest',   scale: [1.02, 0.97, 1.02] as const },
+  { id: 'npc_vendor_curly',  name: 'Торговец Усач (Curly)',           file: 'vendor_curly',  scale: [1.02, 1.01, 1.04] as const },
+  { id: 'npc_vendor_orange', name: 'Торговец Оранжевый (Orange Hat)', file: 'vendor_orange', scale: [1.04, 1.02, 1.00] as const },
+  { id: 'npc_vendor_round',  name: 'Торговец Толстяк (Round)',        file: 'vendor_round',  scale: [1.00, 1.00, 1.00] as const },
 ] as const;
 
 /** One load per GLB file, shared by every instance. */
@@ -155,9 +200,10 @@ export class AssetCatalog {
       id: 'prop_chicken',
       name: 'Курица (Chicken)',
       category: 'props',
-      modelPath: '/models/chicken.glb',
+      modelPath: '/models/chicken_animated.glb',
       defaultScale: 0.6,
-      createInstance: () => this.createProceduralChicken(),
+      createInstance: () =>
+        this.createGlbInstance('/models/chicken_animated.glb', [0.3, 0.6, 0.4], 'Run'),
     });
 
     // Arch
@@ -416,7 +462,7 @@ export class AssetCatalog {
     });
 
     // ------------------------------------------------------------------------
-    // 5. MARKET MODELS (carts on wheels and empty stalls, GLB with Idle animation)
+    // 5. MARKET MODELS (carts and GLB stalls with Idle/Roll/Open animations)
     // ------------------------------------------------------------------------
 
     for (const model of MARKET_MODELS) {
@@ -431,13 +477,108 @@ export class AssetCatalog {
         createInstance: () => this.createGlbInstance(modelPath, model.size),
       });
     }
+
+    // ------------------------------------------------------------------------
+    // 6. MARKET GOODS — small props (tableware, food, everyday items), static
+    // ------------------------------------------------------------------------
+
+    for (const good of MARKET_GOODS_MODELS) {
+      const modelPath = `/models/market_goods/${good.file}.glb`;
+      this.registerAsset({
+        id: good.id,
+        name: good.name,
+        category: 'items',
+        modelPath,
+        defaultScale: 1.0,
+        metadata: {
+          ...(good.wordId ? { word_id: good.wordId } : {}),
+          marketGood: good.file,
+        },
+        // Static models — no animation expected
+        createInstance: () => this.createGlbInstance(modelPath, good.size, null),
+      });
+    }
+
+    // ------------------------------------------------------------------------
+    // 7. COMICAL VENDOR NPCs — 7 colour/style variants, Idle/Wave/Angry/Walk
+    // ------------------------------------------------------------------------
+
+    for (const v of COMICAL_VENDOR_MODELS) {
+      const modelPath = `/models/comical_vendor/${v.file}.glb`;
+      this.registerAsset({
+        id: v.id,
+        name: v.name,
+        category: 'npcs',
+        modelPath,
+        defaultScale: 1.0,
+        metadata: {
+          npc_id: v.id,
+          kind: 'merchant',
+          vendorVariant: v.file,
+          vendorScale: v.scale,
+        },
+        // vendorScale applied after load; default idle animation
+        createInstance: () =>
+          this.createGlbInstance(modelPath, [0.5, 1.7, 0.5], 'Idle', v.scale as unknown as [number, number, number]),
+      });
+    }
+
+    // Comical vendor — base/default variant
+    this.registerAsset({
+      id: 'npc_comical_vendor',
+      name: 'Торговец комичный (Comical Vendor)',
+      category: 'npcs',
+      modelPath: '/models/comical_vendor/comical_vendor.glb',
+      defaultScale: 1.0,
+      metadata: { npc_id: 'npc_comical_vendor', kind: 'merchant' },
+      createInstance: () =>
+        this.createGlbInstance('/models/comical_vendor/comical_vendor.glb', [0.5, 1.7, 0.5], 'Idle'),
+    });
+
+    // ------------------------------------------------------------------------
+    // 8. COMICAL TOURIST — animated player-like character (Idle/Walk/Wave/Jump)
+    // ------------------------------------------------------------------------
+
+    this.registerAsset({
+      id: 'npc_comical_tourist',
+      name: 'Комичный турист (Comical Tourist)',
+      category: 'npcs',
+      modelPath: '/models/comical_tourist.glb',
+      defaultScale: 1.0,
+      metadata: { npc_id: 'npc_comical_tourist', kind: 'tourist' },
+      createInstance: () =>
+        this.createGlbInstance('/models/comical_tourist.glb', [0.5, 2.05, 0.5], 'Idle'),
+    });
+
+    // ------------------------------------------------------------------------
+    // 9. CHICKEN ANIMATED — prop chicken (Run / Peck / PanicRun clips)
+    // ------------------------------------------------------------------------
+
+    this.registerAsset({
+      id: 'prop_chicken_animated',
+      name: 'Анимированная курица (Animated Chicken)',
+      category: 'props',
+      modelPath: '/models/chicken_animated.glb',
+      defaultScale: 1.0,
+      createInstance: () =>
+        this.createGlbInstance('/models/chicken_animated.glb', [0.3, 0.6, 0.4], 'Peck'),
+    });
   }
 
   /**
-   * Returns a group immediately with a footprint placeholder, then swaps in the GLB once loaded
-   * and plays its Idle clip. Without a browser (tests, SSR) the placeholder stays.
+   * Returns a group immediately with a footprint placeholder, then swaps in the GLB once loaded.
+   *
+   * @param modelPath  Public path to the GLB file.
+   * @param size       [sx, sy, sz] for the placeholder box. sy is also used for placeholder height.
+   * @param idleClip   Name of the animation clip to loop, or null for static models. Defaults to 'Idle'.
+   * @param modelScale Optional per-axis scale applied to the loaded scene node (e.g. vendor variants).
    */
-  private createGlbInstance(modelPath: string, size: readonly number[]): THREE.Group {
+  protected createGlbInstance(
+    modelPath: string,
+    size: readonly number[],
+    idleClip: string | null = 'Idle',
+    modelScale?: [number, number, number],
+  ): THREE.Group {
     const group = new THREE.Group();
     const [sx, sy, sz] = size;
     const placeholder = new THREE.Mesh(
@@ -457,32 +598,40 @@ export class AssetCatalog {
     }
     loading
       .then((gltf) => {
-        const model = gltf.scene.clone(true);
+        const model = SkeletonUtils.clone(gltf.scene);
         model.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             child.castShadow = true;
             child.receiveShadow = true;
           }
         });
+        if (modelScale) {
+          model.scale.set(modelScale[0], modelScale[1], modelScale[2]);
+        }
         group.remove(placeholder);
         placeholder.geometry.dispose();
         (placeholder.material as THREE.Material).dispose();
         group.add(model);
 
-        const idle = THREE.AnimationClip.findByName(gltf.animations, 'Idle');
-        const ticker = model.getObjectByProperty('isMesh', true);
-        if (idle && ticker) {
-          const mixer = new THREE.AnimationMixer(model);
-          mixer.clipAction(idle).play();
-          group.userData.mixer = mixer;
-          group.userData.animations = gltf.animations;
-          // Advance the animation only while the model is actually rendered.
-          let last = performance.now();
-          ticker.onBeforeRender = () => {
-            const now = performance.now();
-            mixer.update(Math.min((now - last) / 1000, 0.1));
-            last = now;
-          };
+        // Store all clips so callers can trigger Wave/Angry/Walk later
+        group.userData.animations = gltf.animations;
+
+        if (idleClip !== null && gltf.animations.length > 0) {
+          const clip = THREE.AnimationClip.findByName(gltf.animations, idleClip)
+            ?? gltf.animations[0]; // fall back to first clip if named one not found
+          const ticker = model.getObjectByProperty('isMesh', true);
+          if (clip && ticker) {
+            const mixer = new THREE.AnimationMixer(model);
+            mixer.clipAction(clip).play();
+            group.userData.mixer = mixer;
+            // Advance mixer on every render frame of the first visible mesh
+            let last = performance.now();
+            ticker.onBeforeRender = () => {
+              const now = performance.now();
+              mixer.update(Math.min((now - last) / 1000, 0.1));
+              last = now;
+            };
+          }
         }
       })
       .catch((err) => {
@@ -551,7 +700,7 @@ export class AssetCatalog {
     return group;
   }
 
-  private createProceduralChicken(): THREE.Group {
+  protected createProceduralChicken(): THREE.Group {
     const group = new THREE.Group();
 
     // Body

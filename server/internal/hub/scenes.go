@@ -227,7 +227,7 @@ func (h *Hub) dialogueDone(s *liveScene, status string) {
 	}
 	npc := h.catalog.NPCs[s.data.NPCID]
 	for _, observer := range h.nearby(npc.X, npc.Z, speechRadius) {
-		h.emit(observer, "NPC_STATE", h.state(s, observer))
+		h.emit(observer, "NPC_STATE", h.stateFor(observer, s))
 		h.emit(observer, "DIALOGUE_DONE", map[string]any{"npc_id": npc.ID, "status": status, "scene_version": s.data.Version})
 	}
 }

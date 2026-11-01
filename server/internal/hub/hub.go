@@ -55,6 +55,7 @@ type client struct {
 	speech      *Speech
 	quiz        string
 	quizItem    string
+	offsets     map[string]db.Offset // admin corrections of NPC moods towards this player
 	lastChat    time.Time
 	window      time.Time
 	count       int
@@ -286,8 +287,13 @@ func (h *Hub) add(e join) {
 		e.conn.Close()
 		return
 	}
+	offsets, err := h.store.Offsets(h.ctx, p.ID)
+	if err != nil {
+		e.conn.Close()
+		return
+	}
 	ctx, cancel := context.WithCancel(h.ctx)
-	c := &client{conn: e.conn, send: make(chan []byte, 256), done: make(chan struct{}), ctx: ctx, cancel: cancel, player: p, expires: e.expires, loaded: map[string]bool{}, visible: map[int64]bool{}, known: map[string]bool{}}
+	c := &client{conn: e.conn, send: make(chan []byte, 256), done: make(chan struct{}), ctx: ctx, cancel: cancel, player: p, expires: e.expires, loaded: map[string]bool{}, visible: map[int64]bool{}, known: map[string]bool{}, offsets: offsets}
 	for _, w := range words {
 		c.known[w] = true
 	}
@@ -507,6 +513,19 @@ func (h *Hub) handle(c *client, p Packet) {
 				h.emit(other, "PLAYER_MOVE", map[string]any{"player_id": c.player.ID, "x": c.player.X, "z": c.player.Z, "rotation": c.player.Rotation})
 			}
 		}
+	case "ANIMATION":
+		var v struct {
+			Action string `json:"action"`
+		}
+		if Decode(p.Payload, &v) != nil || len(v.Action) == 0 || len(v.Action) > 32 {
+			h.fail(c, "INVALID_ANIMATION")
+			return
+		}
+		for _, other := range h.clients {
+			if other != c && other.visible[c.player.ID] {
+				h.emit(other, "PLAYER_ANIMATION", map[string]any{"player_id": c.player.ID, "action": v.Action})
+			}
+		}
 	case "CHAT":
 		var v struct {
 			Text string `json:"text"`
@@ -533,6 +552,10 @@ func (h *Hub) handle(c *client, p Packet) {
 		h.calculator(c, p.Payload)
 	case "INSPECT":
 		h.inspect(c, p.Payload)
+	case "ADMIN_NPC_RELATIONS":
+		h.adminRelations(c, p.Payload)
+	case "ADMIN_SET_RELATION":
+		h.adminSetRelation(c, p.Payload)
 	case "WORLD_EDIT":
 		if h.world.Revisions != nil {
 			h.fail(c, "INVALID_WORLD_EDIT")

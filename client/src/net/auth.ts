@@ -20,6 +20,7 @@ export interface AuthPlayer {
   z: number;
   rotation: number;
   balance: number;
+  isAdmin: boolean;
 }
 
 export interface AuthItem {
@@ -166,6 +167,7 @@ export function sessionFromResponse(data: unknown): AuthSession {
       z: num(p.z, 110),
       rotation: num(p.rotation, 0),
       balance: num(p.balance, 500),
+      isAdmin: p.is_admin === true,
     },
     knownWords: Array.isArray(data.known_words)
       ? data.known_words.filter((w): w is string => typeof w === 'string')

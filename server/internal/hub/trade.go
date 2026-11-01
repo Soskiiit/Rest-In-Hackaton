@@ -165,7 +165,7 @@ func (h *Hub) calculator(c *client, raw []byte) {
 	h.purchaseResult(c, receipt, replayed)
 	if current, err := h.getScene(npc.ID); err == nil {
 		for _, observer := range h.nearby(npc.X, npc.Z, speechRadius) {
-			h.emit(observer, "NPC_STATE", h.state(current, observer))
+			h.emit(observer, "NPC_STATE", h.stateFor(observer, current))
 			h.emit(observer, "PURCHASE", map[string]any{"player_id": c.player.ID, "npc_id": npc.ID, "item_id": receipt.ItemID, "amount": receipt.Amount})
 		}
 	}

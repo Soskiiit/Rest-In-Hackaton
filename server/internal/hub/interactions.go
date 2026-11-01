@@ -69,12 +69,14 @@ func (h *Hub) dialogue(c *client, raw []byte) {
 	// Dialogue uses the actor's persistent relationship, while price stays shared.
 	relation.Price = s.data.Price
 	relation.Floor = s.data.Floor
+	// The NPC answers this player in the mood it has towards them (shared mood + admin offset).
+	relation.Mianzi, relation.Aggro = h.effective(c, npc.ID, relation.Mianzi, relation.Aggro)
 	c.pending = true
 	s.owner = c
 	scene := s.data
 	for _, observer := range h.nearby(npc.X, npc.Z, speechRadius) {
 		h.emit(observer, "DIALOGUE_PENDING", map[string]any{"npc_id": npc.ID, "player_id": c.player.ID})
-		h.emit(observer, "NPC_STATE", h.state(s, observer))
+		h.emit(observer, "NPC_STATE", h.stateFor(observer, s))
 	}
 	h.wg.Add(1)
 	// WORLD_EDIT swaps h.catalog in the hub loop; the goroutine keeps its own snapshot.
@@ -230,7 +232,7 @@ func (h *Hub) finishDialogue(e aiDone) {
 		}
 		observer.speech = &view
 		h.sendSpeech(observer, view)
-		h.emit(observer, "NPC_STATE", h.state(s, observer))
+		h.emit(observer, "NPC_STATE", h.stateFor(observer, s))
 		if len(view.Choices) > 0 && view.TurnID != "" {
 			h.emit(observer, "DIALOGUE_CHOICES", map[string]any{
 				"npc_id":  view.NPCID,
@@ -280,11 +282,13 @@ func (h *Hub) partialDialogue(e aiPartial) {
 			}
 		}
 		view.Tokens = game.Filter(view.Tokens, observer.known)
+		view.Mianzi, view.Aggro = h.effective(observer, view.NPCID, view.Mianzi, view.Aggro)
 		h.emit(observer, "NPC_SPEECH_PARTIAL", view)
 	}
 }
 func (h *Hub) sendSpeech(c *client, s Speech) {
 	s.Tokens = game.Filter(s.Tokens, c.known)
+	s.Mianzi, s.Aggro = h.effective(c, s.NPCID, s.Mianzi, s.Aggro)
 	h.emit(c, "NPC_SPEECH", s)
 }
 func (h *Hub) inspect(c *client, raw []byte) {

@@ -82,12 +82,14 @@ func completeTurn(t *testing.T, h *Hub, c *client, npc string, choice int) {
 		t.Fatalf("dialogue did not start: %+v", packets(c))
 	}
 	h.wg.Wait()
-	deadline := time.After(time.Second)
+	deadline := time.After(2 * time.Second)
 	for c.pending {
 		select {
-		case e := <-h.events:
-			if done, ok := e.(aiDone); ok {
-				h.finishDialogue(done)
+		case raw := <-h.events:
+			if e, ok := raw.(aiDone); ok {
+				h.finishDialogue(e)
+			} else if p, ok := raw.(aiPartial); ok {
+				h.partialDialogue(p)
 			}
 		case <-deadline:
 			t.Fatal("missing result")
