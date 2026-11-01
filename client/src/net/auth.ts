@@ -109,14 +109,30 @@ export function validateCredentials(
   return null;
 }
 
-/** Адрес REST API: тот же хост, что у страницы, порт 3000 (или ?api_port= / ?ws_port=). */
-export function resolveApiBase(loc: { protocol?: string; hostname?: string; search?: string }): string {
+/** Адрес REST API: тот же хост, что у страницы; на HTTPS порт опускается, на HTTP по умолчанию 3000 (или ?api_port= / ?ws_port=). */
+export function resolveApiBase(loc: { protocol?: string; hostname?: string; port?: string; search?: string }): string {
   const params = new URLSearchParams(loc.search ?? '');
-  const port = params.get('api_port') || params.get('ws_port') || DEFAULT_API_PORT;
-  const scheme = loc.protocol === 'https:' ? 'https' : 'http';
+  const overridePort = params.get('api_port') || params.get('ws_port');
+  const scheme = loc.protocol === 'https:' ? 'https' : (loc.protocol ? loc.protocol.replace(':', '') : 'http');
   const host = loc.hostname || 'localhost';
   const hostPart = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
-  return `${scheme}://${hostPart}:${port}`;
+
+  if (overridePort) {
+    return `${scheme}://${hostPart}:${overridePort}`;
+  }
+
+  if (scheme === 'https') {
+    if (loc.port && loc.port !== '443') {
+      return `${scheme}://${hostPart}:${loc.port}`;
+    }
+    return `${scheme}://${hostPart}`;
+  }
+
+  if (loc.port === '80') {
+    return `${scheme}://${hostPart}`;
+  }
+
+  return `${scheme}://${hostPart}:${DEFAULT_API_PORT}`;
 }
 
 /** Адрес WebSocket с токеном для данного API. */

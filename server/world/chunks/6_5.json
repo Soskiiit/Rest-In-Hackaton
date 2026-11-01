@@ -1,1 +1,1 @@
-{"chunk_id":"6_5","buildings":[{"type":"stall","x":3,"z":4},{"type":"stall","x":15,"z":16}],"lanterns":[{"x":4,"y":3,"z":5},{"x":14,"y":3,"z":15}],"signs":[],"npcs":[],"items":[]}
+{"chunk_id":"6_5","buildings":[{"type":"structure_stall_general","x":3,"z":4},{"type":"structure_stall_general","x":15,"z":16}],"lanterns":[{"x":4,"y":3,"z":5},{"x":14,"y":3,"z":15}],"signs":[],"npcs":[],"items":[]}
