@@ -213,6 +213,35 @@ describe('EditorSelectionManager (Milestone M2)', () => {
       expect(resolved?.rootObject).toBe(root);
     });
 
+    it('should select an object when clicking off-center or in empty gap within its bounding volume', () => {
+      // Hollow archway object: left pillar at x = -1, right pillar at x = 1, empty space at center (0, 0)
+      const archGroup = new THREE.Group();
+      const pLeft = new THREE.Mesh(new THREE.BoxGeometry(0.2, 2, 0.2), new THREE.MeshBasicMaterial());
+      pLeft.position.set(-1, 0, 0);
+      const pRight = new THREE.Mesh(new THREE.BoxGeometry(0.2, 2, 0.2), new THREE.MeshBasicMaterial());
+      pRight.position.set(1, 0, 0);
+      archGroup.add(pLeft, pRight);
+
+      scene.add(archGroup);
+      archGroup.updateMatrixWorld(true);
+
+      const archEntity: SelectableEntity = {
+        id: 'hollow_arch',
+        type: 'prop',
+        assetId: 'arch',
+        rootObject: archGroup,
+        chunkId: '0_0',
+      };
+      selectionManager.registerSelectable(archEntity);
+
+      // Raycast straight at NDC (0, 0), which is right in the center gap of the arch where no mesh exists!
+      const selected = selectionManager.raycastSelect(0, 0);
+
+      expect(selected).not.toBeNull();
+      expect(selected?.id).toBe('hollow_arch');
+      expect(selectionManager.getSelected()?.id).toBe('hollow_arch');
+    });
+
     it('should ignore background meshes and deselect when background is clicked', () => {
       // 1. Tagged selectable entity at (0, 0, 0)
       const rootEntity = new THREE.Group();

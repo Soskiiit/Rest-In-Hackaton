@@ -73,11 +73,18 @@ export class World {
     mixer?: THREE.AnimationMixer;
     clips?: THREE.AnimationClip[];
     idleAction?: THREE.AnimationAction;
+    currentAction?: THREE.AnimationAction;
+    currentClipName?: string;
     npcId?: string;
     x: number;
     z: number;
+    baseRotY: number;
     isCentral?: boolean;
+    animState?: 'idle' | 'waving' | 'reacting' | 'custom';
   }> = [];
+  private lastPlayerX: number = 100;
+  private lastPlayerZ: number = 100;
+  private playerStoppedTimer: number = 0;
   private chickenEntries: Array<{
     root: THREE.Object3D;
     mixer: THREE.AnimationMixer;
@@ -675,10 +682,14 @@ export class World {
         mixer: centralMixer,
         clips: laoGltf.animations,
         idleAction: centralIdleAction,
+        currentAction: centralIdleAction,
+        currentClipName: 'Idle',
         npcId: 'lao_wang',
         x: 100.0,
         z: 125.55,
+        baseRotY: Math.PI,
         isCentral: true,
+        animState: 'idle',
       });
 
       // Populate every stall cycling through the vendor palette
@@ -724,10 +735,14 @@ export class World {
           mixer,
           clips: sourceGltf.animations,
           idleAction,
+          currentAction: idleAction,
+          currentClipName: 'Idle',
           npcId: isNearChefChen ? 'chef_chen' : `vendor_${i}`,
           x: vp.x,
           z: vp.z,
+          baseRotY: vp.rotY,
           isCentral: false,
+          animState: 'idle',
         });
       }
     }).catch((err) => {
@@ -1202,68 +1217,165 @@ export class World {
   };
 
   /**
-   * Updates animated vendor models (Chef Chen & Lao Wang) selectively:
-   * 1. Distance culls distant vendors (> 40m) by setting root.visible = false, pruning ~3,700 scene nodes
-   *    and draw calls from Three.js's projectObject and WebGL render list every frame.
-   * 2. Only processes skeletal animation if NPC is within 35m AND approximately in front of camera view cone
-   *    (dot > 0.15, ~162° view cone), or very close (< 4m) for peripheral vision.
+   * Resolves an alternate non-Wave gesture for when the player stops next to an NPC.
+   * For comical vendors: returns 'Angry' (their expressive comic gesture).
+   * For NPCs with only Idle and Wave: returns 'Idle'.
    */
-  public updateVendorAnimations(delta: number): void {
+  private getOtherNpcClip(clips: THREE.AnimationClip[]): THREE.AnimationClip | null {
+    const angry = clips.find((c) => c.name === 'Angry');
+    if (angry) return angry;
+    const nonWave = clips.find((c) => c.name !== 'Wave' && c.name !== 'Idle' && c.name !== 'Walk');
+    if (nonWave) return nonWave;
+    const idle = clips.find((c) => c.name === 'Idle');
+    return idle ?? clips[0] ?? null;
+  }
+
+  /**
+   * Smoothly cross-fades an NPC's animation action to a new target clip.
+   */
+  private switchVendorAction(vendor: (typeof this.vendorEntries)[0], clipName: string): void {
+    if (!vendor.mixer || !vendor.clips) return;
+    if (vendor.currentClipName === clipName && vendor.currentAction?.isRunning()) return;
+
+    const clip = THREE.AnimationClip.findByName(vendor.clips, clipName) ?? vendor.clips[0];
+    if (!clip) return;
+
+    const nextAction = vendor.mixer.clipAction(clip);
+    nextAction.setLoop(THREE.LoopRepeat, Infinity);
+    nextAction.clampWhenFinished = false;
+    nextAction.reset();
+
+    if (vendor.currentAction && vendor.currentAction !== nextAction) {
+      nextAction.crossFadeFrom(vendor.currentAction, 0.25, true);
+    }
+    nextAction.play();
+    vendor.currentAction = nextAction;
+    vendor.currentClipName = clipName;
+  }
+
+  /**
+   * Updates animated vendor models selectively and reacts to player proximity:
+   * 1. Distance culls distant vendors (> 25m)
+   * 2. When player is approaching (< 8.5m) and moving: vendor waves (Wave animation) to call player over!
+   * 3. When player stops in front of vendor (< 3.4m and speed ~0): vendor switches to an alternate animation (Angry/talking)!
+   * 4. When player leaves (> 8.5m): vendor returns smoothly to Idle.
+   * 5. Smoothly turns vendor torso/head towards player within ±45° when player is nearby.
+   */
+  public updateVendorAnimations(delta: number, playerX?: number, playerZ?: number): void {
     if (this.vendorEntries.length === 0) return;
 
     const camPos = this.camera.position;
+    const px = playerX ?? camPos.x;
+    const pz = playerZ ?? camPos.z;
+
+    // Track player speed to determine whether the player is approaching vs stopped
+    const moveDist = Math.hypot(px - this.lastPlayerX, pz - this.lastPlayerZ);
+    const playerSpeed = delta > 0.0001 ? moveDist / delta : 0;
+    this.lastPlayerX = px;
+    this.lastPlayerZ = pz;
+
+    if (playerSpeed < 0.4) {
+      this.playerStoppedTimer += delta;
+    } else {
+      this.playerStoppedTimer = 0;
+    }
+    const isPlayerStopped = this.playerStoppedTimer >= 0.2;
+
     const camDir = new THREE.Vector3();
     this.camera.getWorldDirection(camDir);
     camDir.y = 0;
     camDir.normalize();
 
-    const maxVisibilityDistSq = 22.0 * 22.0; // 22m distance threshold for mesh visibility
-    const maxAnimDistSq = 18.0 * 18.0; // 18m distance threshold for animation
+    const maxVisibilityDistSq = 25.0 * 25.0; // 25m distance threshold for mesh visibility
+    const maxAnimDistSq = 20.0 * 20.0; // 20m distance threshold for animation
 
     for (let i = 0; i < this.vendorEntries.length; i++) {
       const vendor = this.vendorEntries[i];
+      const dx = vendor.x - px;
+      const dz = vendor.z - pz;
+      const distSq = dx * dx + dz * dz;
+      const dist = Math.sqrt(distSq);
+
       if (vendor.isCentral) {
         vendor.root.visible = true;
-        vendor.mixer?.update(delta);
-        continue;
-      }
-
-      const dx = vendor.x - camPos.x;
-      const dz = vendor.z - camPos.z;
-      const distSq = dx * dx + dz * dz;
-
-      // 1. Distance culling: vendors beyond 22m are occluded by buildings/canopies/walls.
-      // Setting visible = false causes Three.js projectObject to prune all 74 sub-meshes in O(1).
-      if (distSq > maxVisibilityDistSq) {
-        vendor.root.visible = false;
-        continue;
-      }
-
-      // 2. View Cone / Frustum culling:
-      // If farther than 4m, verify NPC is roughly in front of camera view cone (~150°)
-      if (distSq > 16.0) {
-        const dist = Math.sqrt(distSq);
-        const dot = camDir.x * (dx / dist) + camDir.z * (dz / dist);
-        if (dot < 0.15) {
+      } else {
+        // 1. Distance culling: beyond 25m, hide mesh
+        if (distSq > maxVisibilityDistSq) {
           vendor.root.visible = false;
           continue;
         }
-      }
 
-      vendor.root.visible = true;
+        // 2. View Cone culling if farther than 4m
+        if (distSq > 16.0) {
+          const dot = camDir.x * (-dx / dist) + camDir.z * (-dz / dist);
+          if (dot < 0.15) {
+            vendor.root.visible = false;
+            continue;
+          }
+        }
+        vendor.root.visible = true;
+      }
 
       if (!vendor.mixer) {
         continue;
       }
 
-      // 3. Proximity override: if very close (< 4m), always update animation (even in peripheral vision)
-      if (distSq < 16.0) {
-        vendor.mixer.update(delta);
-        continue;
+      // 3. Proximity & Movement Reactive State Machine:
+      // - При приближении (в пределах 8.5м, пока игрок идет): машут рукой (Wave)
+      // - Когда игрок останавливается рядом с прилавком (в пределах 3.4м): переключаются на другую анимацию (Angry)
+      // - На расстоянии (> 8.5м): переходят в спокойный Idle
+      if (vendor.animState !== 'custom') {
+        let targetState: 'idle' | 'waving' | 'reacting' = 'idle';
+        if (dist <= 3.4) {
+          targetState = isPlayerStopped ? 'reacting' : 'waving';
+        } else if (dist <= 8.5) {
+          targetState = 'waving';
+        } else {
+          targetState = 'idle';
+        }
+
+        if (vendor.animState !== targetState) {
+          vendor.animState = targetState;
+          if (targetState === 'waving') {
+            const hasWave = vendor.clips?.some((c) => c.name === 'Wave');
+            if (hasWave) {
+              this.switchVendorAction(vendor, 'Wave');
+            } else {
+              this.switchVendorAction(vendor, 'Idle');
+            }
+          } else if (targetState === 'reacting') {
+            const otherClip = this.getOtherNpcClip(vendor.clips ?? []);
+            if (otherClip) {
+              this.switchVendorAction(vendor, otherClip.name);
+            }
+          } else {
+            this.switchVendorAction(vendor, 'Idle');
+          }
+        }
+
+        // Smoothly orient towards player within ±45° cone when player is near (< 8.5m)
+        if (dist <= 8.5 && dist > 0.1) {
+          const angleToPlayer = Math.atan2(-dx, -dz);
+          let diff = angleToPlayer - vendor.baseRotY;
+          while (diff > Math.PI) diff -= 2 * Math.PI;
+          while (diff < -Math.PI) diff += 2 * Math.PI;
+          const clampedDiff = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, diff));
+          const desiredRotY = vendor.baseRotY + clampedDiff;
+
+          let rotDiff = desiredRotY - vendor.root.rotation.y;
+          while (rotDiff > Math.PI) rotDiff -= 2 * Math.PI;
+          while (rotDiff < -Math.PI) rotDiff += 2 * Math.PI;
+          vendor.root.rotation.y += rotDiff * Math.min(delta * 4.0, 1.0);
+        } else {
+          let rotDiff = vendor.baseRotY - vendor.root.rotation.y;
+          while (rotDiff > Math.PI) rotDiff -= 2 * Math.PI;
+          while (rotDiff < -Math.PI) rotDiff += 2 * Math.PI;
+          vendor.root.rotation.y += rotDiff * Math.min(delta * 2.0, 1.0);
+        }
       }
 
-      // 4. Distance check for animation (18m)
-      if (distSq <= maxAnimDistSq) {
+      // Always update mixer if nearby (< 8.5m) or within standard animation distance
+      if (dist <= 8.5 || distSq <= maxAnimDistSq) {
         vendor.mixer.update(delta);
       }
     }
@@ -1469,21 +1581,29 @@ export class World {
     const clip = THREE.AnimationClip.findByName(entry.clips, reaction);
     if (!clip) return;
 
+    entry.animState = 'custom';
     const action = entry.mixer.clipAction(clip);
     action.reset();
     action.setLoop(THREE.LoopOnce, 1);
     action.clampWhenFinished = false;
 
-    if (entry.idleAction) {
+    if (entry.currentAction && entry.currentAction !== action) {
+      action.crossFadeFrom(entry.currentAction, 0.2, true);
+    } else if (entry.idleAction) {
       action.crossFadeFrom(entry.idleAction, 0.2, true);
     }
     action.play();
+    entry.currentAction = action;
+    entry.currentClipName = reaction;
 
     const onFinished = (e: any) => {
       if (e.action === action) {
         entry.mixer?.removeEventListener('finished', onFinished);
+        entry.animState = 'idle';
         if (entry.idleAction) {
           entry.idleAction.reset().fadeIn(0.25).play();
+          entry.currentAction = entry.idleAction;
+          entry.currentClipName = 'Idle';
         }
       }
     };
@@ -1580,7 +1700,7 @@ export class World {
     }
 
     // Update animated vendor models selectively (only visible & within range)
-    this.updateVendorAnimations(delta);
+    this.updateVendorAnimations(delta, playerX, playerZ);
 
     // Update animated running chickens across streets and plazas
     this.updateChickens(delta, playerX, playerZ);

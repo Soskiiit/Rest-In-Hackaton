@@ -260,6 +260,14 @@ export class EditorSelectionManager {
 
     if (!this.domElement) return;
 
+    // Prevent deselection / raycasting if click target was an editor UI overlay (toolbar, catalog, inspector, etc.)
+    const target = (event as MouseEvent).target as HTMLElement | null;
+    if (target && target !== this.domElement) {
+      if (typeof target.closest === 'function' && target.closest('.catalog-ui-container, .property-inspector, .cyber-save-btn, .cyber-mode-btn, button, input, select, textarea, .hud-panel')) {
+        return;
+      }
+    }
+
     const rect = typeof this.domElement.getBoundingClientRect === 'function'
       ? this.domElement.getBoundingClientRect()
       : { left: 0, top: 0, width: (this.domElement as any).clientWidth || 800, height: (this.domElement as any).clientHeight || 600 };
@@ -495,45 +503,123 @@ export class EditorSelectionManager {
 
   /**
    * Performs raycasting against candidate selectable objects.
+   * Tests both direct mesh triangles and the full 3D bounding volume of entities,
+   * so players can select an object by clicking anywhere on it (canopies, openings,
+   * edges, bounds), rather than having to hunt and click perfectly on the object center.
    * If an entity is hit, selects it and returns it.
-   * If empty space or non-selectable mesh is hit, deselects and returns null.
+   * If empty space or untagged geometry is clicked, deselects and returns null.
    */
   public raycastSelect(normalizedX: number, normalizedY: number): SelectableEntity | null {
     this.raycaster.setFromCamera(new THREE.Vector2(normalizedX, normalizedY), this.camera);
 
-    // Collect candidate root objects
-    const candidateRoots: THREE.Object3D[] = [];
+    // Collect candidate entities
+    const candidateEntities: SelectableEntity[] = [];
     for (const entity of this.selectableEntities.values()) {
       if (entity.rootObject && entity.rootObject.visible !== false) {
-        candidateRoots.push(entity.rootObject);
+        candidateEntities.push(entity);
       }
     }
 
     // If no explicit registered entities, look for scene objects tagged with isSelectable
-    if (candidateRoots.length === 0) {
+    if (candidateEntities.length === 0) {
       this.scene.traverse((child) => {
         if (child.userData?.isSelectable && child.visible !== false) {
-          candidateRoots.push(child);
+          const entity = this.findSelectableRoot(child);
+          if (entity && !candidateEntities.includes(entity)) {
+            candidateEntities.push(entity);
+          }
         }
       });
     }
 
-    if (candidateRoots.length === 0) {
+    if (candidateEntities.length === 0) {
       this.select(null);
       return null;
     }
 
-    const intersects = this.raycaster.intersectObjects(candidateRoots, true);
+    const candidateRoots = candidateEntities.map((e) => e.rootObject);
 
-    for (const hit of intersects) {
+    // 1. Direct mesh surface raycasting (accurate triangle intersection)
+    const meshIntersects = this.raycaster.intersectObjects(candidateRoots, true);
+    let bestMeshEntity: SelectableEntity | null = null;
+    let minMeshDist = Infinity;
+
+    for (const hit of meshIntersects) {
       if (this.isHelperObject(hit.object)) {
         continue;
       }
       const rootEntity = this.findSelectableRoot(hit.object);
       if (rootEntity) {
-        this.select(rootEntity);
-        return rootEntity;
+        if (hit.distance < minMeshDist) {
+          minMeshDist = hit.distance;
+          bestMeshEntity = rootEntity;
+        }
+        break; // Closest valid mesh hit
       }
+    }
+
+    // 2. Bounding volume raycasting: test ray against each entity's 3D bounding box.
+    // Allows selecting an object by clicking anywhere across its entire 3D volume
+    // (openings, canopies, foliage, rims, edges) without having to aim at the center.
+    let bestBoxEntity: SelectableEntity | null = null;
+    let minBoxDist = Infinity;
+
+    const hitPoint = new THREE.Vector3();
+    const box = new THREE.Box3();
+    const boxSize = new THREE.Vector3();
+    const boxCenter = new THREE.Vector3();
+
+    for (const entity of candidateEntities) {
+      if (!entity.rootObject) continue;
+
+      box.setFromObject(entity.rootObject);
+      if (box.isEmpty()) continue;
+
+      box.getSize(boxSize);
+      box.getCenter(boxCenter);
+
+      // Ensure a comfortable clickable hit volume, even for small items or thin props
+      const minHitDim = 0.45;
+      const hitDimX = Math.max(boxSize.x + 0.15, minHitDim);
+      const hitDimY = Math.max(boxSize.y + 0.15, minHitDim);
+      const hitDimZ = Math.max(boxSize.z + 0.15, minHitDim);
+
+      const expandedBox = new THREE.Box3().setFromCenterAndSize(
+        boxCenter,
+        new THREE.Vector3(hitDimX, hitDimY, hitDimZ)
+      );
+
+      const intersection = this.raycaster.ray.intersectBox(expandedBox, hitPoint);
+      if (intersection) {
+        const dist = this.raycaster.ray.origin.distanceTo(hitPoint);
+        if (dist < minBoxDist) {
+          minBoxDist = dist;
+          bestBoxEntity = entity;
+        }
+      }
+    }
+
+    // 3. Selection arbitration:
+    // If we have a direct mesh hit:
+    // Prefer the direct mesh hit UNLESS a bounding-box hit belongs to a foreground entity
+    // that is substantially in front of the mesh hit.
+    let chosenEntity: SelectableEntity | null = null;
+
+    if (bestMeshEntity && minMeshDist < Infinity) {
+      if (bestBoxEntity && minBoxDist + 0.35 < minMeshDist) {
+        // Foreground object's bounding volume was clearly in front of the background mesh
+        chosenEntity = bestBoxEntity;
+      } else {
+        chosenEntity = bestMeshEntity;
+      }
+    } else if (bestBoxEntity && minBoxDist < Infinity) {
+      // No direct mesh triangle was hit (clicked in a gap, open canopy, or off-center on the object bounds)
+      chosenEntity = bestBoxEntity;
+    }
+
+    if (chosenEntity) {
+      this.select(chosenEntity);
+      return chosenEntity;
     }
 
     // Clicked empty space or untagged geometry
