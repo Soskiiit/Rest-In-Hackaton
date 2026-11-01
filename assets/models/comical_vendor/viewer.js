@@ -13,20 +13,21 @@ const floor=new THREE.Mesh(new THREE.PlaneGeometry(100,100),new THREE.MeshStanda
 let root,mixer,clips=[],active,paused=false,speed=1,view='front',selection='all';
 const figures=[];
 const each=callback=>{const saved={root,mixer,clips,active};for(const f of figures.filter(f=>f.holder.visible)){({root,mixer,clips,active}=f);callback(f);f.active=active;}({root,mixer,clips,active}=saved);};
-function resize(){renderer.setSize(host.clientWidth,host.clientHeight);const aspect=host.clientWidth/host.clientHeight,h=selection==='all'?2.35:1.03;camera.left=-h*aspect;camera.right=h*aspect;camera.top=h;camera.bottom=-h;camera.updateProjectionMatrix();}
+function resize(){renderer.setSize(host.clientWidth,host.clientHeight);const aspect=host.clientWidth/host.clientHeight,h=selection==='all'?2.35:selection==='vendor_round'?1.45:1.03;camera.left=-h*aspect;camera.right=h*aspect;camera.top=h;camera.bottom=-h;camera.updateProjectionMatrix();}
 new ResizeObserver(resize).observe(host);
 function setView(value){view=value;camera.zoom=1;controls.target.set(0,.85,0);const positions={front:[0,1.1,5],angle:[3,1.8,5],side:[5,1.1,0],back:[0,1.1,-5]};camera.position.fromArray(positions[value]);controls.update();camera.updateProjectionMatrix();}
-function playOne(name){if(!mixer)return;const clip=clips.find(c=>c.name===name);if(!clip)throw Error('Missing clip '+name);const next=mixer.clipAction(clip);next.reset();next.enabled=true;next.setEffectiveWeight(1);next.setEffectiveTimeScale(1);next.setLoop(name==='Wave'||name==='Angry'?THREE.LoopOnce:THREE.LoopRepeat,Infinity);next.clampWhenFinished=true;if(active&&active!==next){active.crossFadeTo(next,.12,false);}next.play();active=next;for(const button of document.querySelectorAll('[data-clip]'))button.setAttribute('aria-pressed',String(button.dataset.clip===name));}
-function poseOne(name,time){paused=true;document.querySelector('#pause').textContent='Продолжить';document.querySelector('#pause').setAttribute('aria-pressed','true');mixer.stopAllAction();root.traverse(node=>{const initial=node.userData.initial;if(initial){node.position.fromArray(initial.position);node.quaternion.fromArray(initial.quaternion);node.scale.fromArray(initial.scale);}});const clip=clips.find(c=>c.name===name),action=mixer.clipAction(clip);action.reset().setLoop(THREE.LoopOnce,1).play();active=action;mixer.setTime(time);root.updateMatrixWorld(true);renderer.render(scene,camera);}
-function snapshot(){root.updateMatrixWorld(true);const nodes={};for(const name of ['Hips','Head','L_Shoulder','R_Shoulder','L_Hip','R_Hip','L_BrowPivot','R_BrowPivot','MustachePivot']){const node=root.getObjectByName(name);nodes[name]={position:node.position.toArray(),quaternion:node.quaternion.toArray(),world:node.getWorldPosition(new THREE.Vector3()).toArray()};}const box=new THREE.Box3().setFromObject(root);return {nodes,bounds:{min:box.min.toArray(),max:box.max.toArray()},clips:clips.map(c=>({name:c.name,duration:c.duration})),view,paused};}
+function playOne(name){if(!mixer)return;const clip=clips.find(c=>c.name===name);if(!clip)return;const next=mixer.clipAction(clip);next.reset();next.enabled=true;next.setEffectiveWeight(1);next.setEffectiveTimeScale(1);next.setLoop(['Wave','Angry','FallBack'].includes(name)?THREE.LoopOnce:THREE.LoopRepeat,Infinity);next.clampWhenFinished=true;if(active&&active!==next){active.crossFadeTo(next,.12,false);}next.play();active=next;for(const button of document.querySelectorAll('[data-clip]'))button.setAttribute('aria-pressed',String(button.dataset.clip===name));}
+function poseOne(name,time){paused=true;document.querySelector('#pause').textContent='Продолжить';document.querySelector('#pause').setAttribute('aria-pressed','true');mixer.stopAllAction();root.traverse(node=>{const initial=node.userData.initial;if(initial){node.position.fromArray(initial.position);node.quaternion.fromArray(initial.quaternion);node.scale.fromArray(initial.scale);}});const clip=clips.find(c=>c.name===name),action=mixer.clipAction(clip);action.reset();action.clampWhenFinished=true;action.setLoop(THREE.LoopOnce,1).play();active=action;mixer.setTime(time);root.updateMatrixWorld(true);}
+function snapshot(){root.updateMatrixWorld(true);const nodes={};for(const name of ['Hips','Head','L_Shoulder','R_Shoulder','L_Hip','R_Hip','L_BrowPivot','R_BrowPivot','MustachePivot']){const node=root.getObjectByName(name);nodes[name]={position:node.position.toArray(),quaternion:node.quaternion.toArray(),world:node.getWorldPosition(new THREE.Vector3()).toArray()};}const box=new THREE.Box3();root.traverse(n=>{if(n.isMesh){const a=n.geometry.attributes.position;for(let i=0;i<a.count;i++)box.expandByPoint(new THREE.Vector3().fromBufferAttribute(a,i).applyMatrix4(n.matrixWorld));}});return {nodes,bounds:{min:box.min.toArray(),max:box.max.toArray()},clips:clips.map(c=>({name:c.name,duration:c.duration})),view,paused};}
 function play(name){each(()=>playOne(name));}
-function pose(name,time){each(()=>poseOne(name,time));renderer.render(scene,camera);}
+function pose(name,time,render=true){each(()=>poseOne(name,time));if(render)renderer.render(scene,camera);}
 function selectCharacter(value){
  selection=value;floor.visible=value!=='all';
- figures.forEach((f,i)=>{f.holder.visible=value==='all'?i>0:f.id===value;if(value==='all'){const n=i-1;f.holder.position.set((n%3-1)*1.8,n<3?1.15:-1.05,0);}else f.holder.position.set(0,0,0);f.platform.visible=value==='all';});
+ figures.forEach((f,i)=>{f.holder.visible=value==='all'?i>0:f.id===value;if(value==='all'){const n=i-1,row=Math.floor(n/4),columns=Math.min(4,figures.length-1-row*4);f.holder.position.set((n%4-(columns-1)/2)*1.8,row===0?1.15:-1.05,0);}else f.holder.position.set(0,0,0);f.platform.visible=value==='all';});
  const f=figures.find(f=>f.holder.visible);({root,mixer,clips,active}=f);document.querySelector('a[download]').href=value==='all'?'./variants.json':'./'+f.file;document.querySelector('a[download]').textContent=value==='all'?'Манифест набора ↓':'Скачать GLB ↓';
+ document.querySelector('[data-clip=FallBack]').disabled=value!=='vendor_round';
  setView(view);resize();
- status.textContent=value==='all'?'Шесть новых вариантов · усы только у двух персонажей':f.label+' · '+f.triangles+' треугольников';
+ status.textContent=value==='all'?'Семь вариантов · выберите круглощёкого для падения':f.label+' · '+f.triangles+' треугольников';
 }
 async function initialize(){
  const variants=await(await fetch('./variants.json')).json();
@@ -37,7 +38,7 @@ async function initialize(){
   holder.add(root);scene.add(holder);mixer=new THREE.AnimationMixer(root);active=null;
   const platform=new THREE.Mesh(new THREE.CylinderGeometry(.78,.78,.025,32),new THREE.MeshStandardMaterial({color:'#e8c9bc',roughness:1}));platform.position.y=-.022;platform.receiveShadow=true;holder.add(platform);
   const figure={...entry,root,clips,mixer,holder,platform,active};figures.push(figure);
-  mixer.addEventListener('finished',()=>{if(!paused){const old={root,mixer,clips,active};({root,mixer,clips,active}=figure);playOne('Idle');figure.active=active;({root,mixer,clips,active}=old);}});
+  mixer.addEventListener('finished',event=>{if(event.action.getClip().name==='FallBack')return;if(!paused){const old={root,mixer,clips,active};({root,mixer,clips,active}=figure);playOne('Idle');figure.active=active;({root,mixer,clips,active}=old);}});
   playOne('Idle');figure.active=active;
   const option=document.createElement('option');option.value=entry.id;option.textContent=entry.label;document.querySelector('#character').append(option);
  }

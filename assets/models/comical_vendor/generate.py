@@ -295,8 +295,12 @@ def build(config=None):
     if config.get('wide_pants'):
         for n in m.g['nodes']:
             if n['name'].endswith('_ShortLeg'):n['scale'][0]*=1.35;n['scale'][2]*=1.2
+    if config.get('round'):
+        from round_variant import configure
+        configure(m,quat)
     info=m.save()
     info.update(units='meters',up='+Y',forward='+Z',origin='between feet at ground',rig='rigid articulated nodes; no skinning',root_motion=False,clips={'Idle':{'duration':3.2,'loop':True},'Wave':{'duration':2.2,'loop':False},'Angry':{'duration':1.8,'loop':False},'Walk':{'duration':1,'loop':True}})
+    if config.get('round'):info['clips']['FallBack']={'duration':3.6,'loop':False}
     if config:info.update(id=config['id'],label=config['label'],mustache=config.get('mustache','none'),hair=config.get('hair'),scale=config.get('scale',[1,1,1]))
     (OUT/(config['id']+'.json' if config else 'manifest.json')).write_text(json.dumps(info,ensure_ascii=False,indent=2)+'\n')
     print(json.dumps(info,ensure_ascii=False))
@@ -311,10 +315,15 @@ VARIANTS=[
  {'id':'vendor_orange','label':'Оранжевый в шляпе','colors':{'red':(.94,.20,.018),'gold':(.30,.10,.025)},'hat':True,'mustache':'down','goatee':True,'scale':[1.04,1.02,1.0],'width':1.06}
 ]
 
+ROUND_VARIANT={'id':'vendor_round','label':'Круглощёкий весельчак','round':True,'hat':True,'mustache':'down','goatee':True}
+
 if __name__=='__main__':
     import argparse
-    parser=argparse.ArgumentParser();parser.add_argument('--variants',action='store_true');args=parser.parse_args()
-    if args.variants:
-        entries=[build(config)for config in VARIANTS]
+    parser=argparse.ArgumentParser();parser.add_argument('--variants',action='store_true');parser.add_argument('--round',action='store_true');args=parser.parse_args()
+    if args.round:
+        info=build(ROUND_VARIANT)
+        path=OUT/'variants.json';catalog=json.loads(path.read_text());catalog['models']=[e for e in catalog['models']if e['id']!='vendor_round']+[info];path.write_text(json.dumps(catalog,ensure_ascii=False,indent=2)+'\n')
+    elif args.variants:
+        entries=[build(config)for config in [*VARIANTS,ROUND_VARIANT]]
         (OUT/'variants.json').write_text(json.dumps({'models':entries},ensure_ascii=False,indent=2)+'\n')
     else:build()
