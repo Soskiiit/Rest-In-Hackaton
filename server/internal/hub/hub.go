@@ -59,6 +59,10 @@ type client struct {
 	lastChat    time.Time
 	window      time.Time
 	count       int
+	fps         float64
+	pingMs      int64
+	pingStart   time.Time
+	pingPending bool
 }
 type Speech struct {
 	NPCID        string        `json:"npc_id"`
@@ -221,10 +225,16 @@ func (h *Hub) run() {
 			return
 		case <-tick.C:
 			h.save()
+			now := time.Now()
 			for _, c := range h.clients {
-				if !time.Now().Before(c.expires) {
+				if !now.Before(c.expires) {
 					h.remove(c)
+					continue
 				}
+				// Measure ping & fps via WebSocket PING/PONG
+				c.pingStart = now
+				c.pingPending = true
+				h.emit(c, "PING", map[string]any{"timestamp": now.UnixMilli()})
 			}
 		case event := <-h.events:
 			switch e := event.(type) {
@@ -586,6 +596,40 @@ func (h *Hub) handle(c *client, p Packet) {
 				h.emit(other, "WORLD_EDIT", map[string]any{"chunk_ids": v.ChunkIDs, "player_id": c.player.ID, "login": c.player.Login})
 			}
 		}
+	case "PING":
+		var v struct {
+			FPS float64 `json:"fps"`
+		}
+		_ = json.Unmarshal(p.Payload, &v)
+		c.fps = v.FPS
+		h.emit(c, "PONG", map[string]any{"fps": c.fps})
+	case "PONG":
+		var v struct {
+			FPS float64 `json:"fps"`
+		}
+		_ = json.Unmarshal(p.Payload, &v)
+		c.fps = v.FPS
+		if c.pingPending {
+			c.pingMs = time.Since(c.pingStart).Milliseconds()
+			c.pingPending = false
+		}
+	case "GET_METRICS":
+		type UserMetric struct {
+			PlayerID int64   `json:"player_id"`
+			Login    string  `json:"login"`
+			FPS      float64 `json:"fps"`
+			Ping     int64   `json:"ping"`
+		}
+		list := make([]UserMetric, 0, len(h.clients))
+		for _, client := range h.clients {
+			list = append(list, UserMetric{
+				PlayerID: client.player.ID,
+				Login:    client.player.Login,
+				FPS:      client.fps,
+				Ping:     client.pingMs,
+			})
+		}
+		h.emit(c, "METRICS_UPDATE", map[string]any{"users": list})
 	default:
 		h.fail(c, "UNKNOWN_PACKET")
 	}

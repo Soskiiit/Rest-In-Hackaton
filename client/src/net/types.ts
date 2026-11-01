@@ -24,6 +24,8 @@ export type PacketType =
   | 'ERROR'
   | 'PING'
   | 'PONG'
+  | 'GET_METRICS'
+  | 'METRICS_UPDATE'
   | 'WELCOME'
   | 'PLAYER_JOIN'
   | 'WORLD_EDIT'
@@ -214,6 +216,17 @@ export interface ConnectionClosedPayload {
   reason: string;
 }
 
+export interface UserMetric {
+  player_id: number;
+  login: string;
+  fps: number;
+  ping: number;
+}
+
+export interface MetricsUpdatePayload {
+  users: UserMetric[];
+}
+
 export interface ErrorPayload {
   message?: string;
   code?: string;
@@ -265,8 +278,10 @@ export interface PacketMap {
   CHUNK_UNLOAD: ChunkUnloadPayload;
   CALCULATOR: CalculatorPayload;
   ERROR: ErrorPayload;
-  PING: Record<string, never>;
-  PONG: Record<string, never>;
+  PING: { timestamp?: number; fps?: number };
+  PONG: { timestamp?: number; fps?: number };
+  GET_METRICS: Record<string, never>;
+  METRICS_UPDATE: MetricsUpdatePayload;
   WELCOME: WelcomePayload;
   PLAYER_JOIN: PlayerJoinPayload;
   WORLD_EDIT: WorldEditPayload;
