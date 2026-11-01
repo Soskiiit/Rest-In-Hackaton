@@ -603,15 +603,15 @@ export class World {
       }
 
       const facingAngle = stall.rotY;
-      // Stalls face with canopy tilted forward towards customer side (+Z)
-      // Vendors now stand on the other side of the counter (+0.95m forward) facing back towards the stall
-      const offsetX = Math.sin(facingAngle) * 0.95;
-      const offsetZ = Math.cos(facingAngle) * 0.95;
+      // Stalls face outwards into the street/walkway
+      // Vendors stand right behind the counter (+0.15m forward past stall center towards the counter)
+      const offsetX = Math.sin(facingAngle) * 0.15;
+      const offsetZ = Math.cos(facingAngle) * 0.15;
 
       vendorPositions.push({
         x: stall.x + offsetX,
         z: stall.z + offsetZ,
-        rotY: facingAngle + Math.PI,
+        rotY: facingAngle,
       });
     }
 
@@ -650,7 +650,7 @@ export class World {
 
       // Spawn Lao Wang at his central antique pavilion stall (100.0, 0, 124.0)
       const centralLaoWang = laoGltf.scene.clone(true);
-      centralLaoWang.position.set(100.0, 0.0, 125.55); // Behind the counter
+      centralLaoWang.position.set(100.0, 0.18, 125.55); // Elevated on stone platform behind counter
       centralLaoWang.rotation.set(0, Math.PI, 0);
       centralLaoWang.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
@@ -691,7 +691,8 @@ export class World {
           : validGltfs[i % validGltfs.length];
 
         const clone = sourceGltf.scene.clone(true);
-        clone.position.set(vp.x, 0.0, vp.z);
+        // Elevated on Y so vendors comfortably tower over the counter and aren't sunken/too short
+        clone.position.set(vp.x, 0.22, vp.z);
         // Models face +Z by default; rotate by vp.rotY to face into corridor
         clone.rotation.set(0, vp.rotY, 0);
 

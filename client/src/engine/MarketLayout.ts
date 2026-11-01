@@ -204,13 +204,13 @@ export class MarketLayout {
 
     // -------------------------------------------------------------------------
     // 1. SOUTH ENTRANCE AVENUE (Player walks North towards Z=100)
-    // Left row at X=96.0 (facing East towards center: rotY = -Math.PI / 2)
-    // Right row at X=104.0 (facing West towards center: rotY = Math.PI / 2)
+    // Left row at X=96.0 (facing East towards street: rotY = Math.PI / 2)
+    // Right row at X=104.0 (facing West towards street: rotY = -Math.PI / 2)
     // Ends at z=91.5 so it leaves the entrance to West/East side corridors completely open!
     // -------------------------------------------------------------------------
     for (let z = 62; z <= 91.5; z += 3.6) {
-      addStall(96.0, z, -Math.PI / 2);
-      addStall(104.0, z, Math.PI / 2);
+      addStall(96.0, z, Math.PI / 2);
+      addStall(104.0, z, -Math.PI / 2);
     }
 
     // -------------------------------------------------------------------------
@@ -219,26 +219,26 @@ export class MarketLayout {
     // West Corridor (along North & South walls, wide unobstructed walkway along Z=100)
     // South row (Z=104.5) stops at x=91.0 to leave the crossroads corner completely open
     for (let x = 74; x <= 91.0; x += 3.6) {
-      addStall(x, 104.5, 0); // South row facing North
+      addStall(x, 104.5, Math.PI); // South row facing North
     }
     // North row (Z=95.5) stops at x=78.5 to not jut out into the passage
     for (let x = 74; x <= 78.5; x += 3.6) {
-      addStall(x, 95.5, Math.PI); // North row facing South
+      addStall(x, 95.5, 0); // North row facing South
     }
 
     // West Square Plaza (around X=60, Z=100)
     // Stalls strictly along walls:
     // West wall: X=50, facing East
     for (let z = 92; z <= 108; z += 3.6) {
-      addStall(50.0, z, -Math.PI / 2);
+      addStall(50.0, z, Math.PI / 2);
     }
     // North wall of West Plaza (Z=90, facing South)
     for (let x = 53.6; x <= 68.0; x += 3.6) {
-      addStall(x, 89.5, Math.PI);
+      addStall(x, 89.5, 0);
     }
     // South wall of West Plaza (Z=110, facing North)
     for (let x = 53.6; x <= 68.0; x += 3.6) {
-      addStall(x, 110.5, 0);
+      addStall(x, 110.5, Math.PI);
     }
 
     // -------------------------------------------------------------------------
@@ -247,49 +247,49 @@ export class MarketLayout {
     // East Corridor (along North & South walls, wide unobstructed walkway along Z=100)
     // South row (Z=104.5) starts at x=109.0 so it doesn't obstruct the crossroads corner
     for (let x = 109.0; x <= 126; x += 3.6) {
-      addStall(x, 104.5, 0); // South row facing North
+      addStall(x, 104.5, Math.PI); // South row facing North
     }
     // North row (Z=95.5) starts at x=121.5 so it doesn't jut out into the passage
     for (let x = 121.5; x <= 126; x += 3.6) {
-      addStall(x, 95.5, Math.PI); // North row facing South
+      addStall(x, 95.5, 0); // North row facing South
     }
 
     // East Square Plaza (around X=140, Z=100)
     // Stalls strictly along walls:
     // East wall: X=150, facing West
     for (let z = 92; z <= 108; z += 3.6) {
-      addStall(150.0, z, Math.PI / 2);
+      addStall(150.0, z, -Math.PI / 2);
     }
     // North wall of East Plaza (Z=90, facing South)
     for (let x = 132.0; x <= 146.4; x += 3.6) {
-      addStall(x, 89.5, Math.PI);
+      addStall(x, 89.5, 0);
     }
     // South wall of East Plaza (Z=110, facing North)
     for (let x = 132.0; x <= 146.4; x += 3.6) {
-      addStall(x, 110.5, 0);
+      addStall(x, 110.5, Math.PI);
     }
 
     // -------------------------------------------------------------------------
     // 4. LARGE NORTH SQUARE PLAZA (Giant Bazaar matching blueprint top)
     // Stalls arranged around perimeter facing inwards
     // -------------------------------------------------------------------------
-    // West vertical row (X=82, Z from 106 to 142, facing East: rotY = -Math.PI / 2)
+    // West vertical row (X=82, Z from 106 to 142, facing East: rotY = Math.PI / 2)
     for (let z = 106; z <= 142; z += 3.6) {
-      addStall(82.0, z, -Math.PI / 2);
+      addStall(82.0, z, Math.PI / 2);
     }
-    // East vertical row (X=118, Z from 106 to 142, facing West: rotY = Math.PI / 2)
+    // East vertical row (X=118, Z from 106 to 142, facing West: rotY = -Math.PI / 2)
     for (let z = 106; z <= 142; z += 3.6) {
-      addStall(118.0, z, Math.PI / 2);
+      addStall(118.0, z, -Math.PI / 2);
     }
-    // North top row (Z=144, facing South: rotY = Math.PI)
+    // North top row (Z=144, facing South: rotY = 0)
     // Left side stalls along North wall (X from 85.0 to 97.0)
     for (let x = 85.0; x <= 97.0; x += 3.6) {
-      addStall(x, 144.0, Math.PI);
+      addStall(x, 144.0, 0);
     }
     // Right side stalls along North wall (X from 106.0 to 115.0)
     // Clears the central walkthrough aisle at x=100..105 so nothing blocks the path
     for (let x = 106.5; x <= 115.0; x += 3.6) {
-      addStall(x, 144.0, Math.PI);
+      addStall(x, 144.0, 0);
     }
 
     return stalls;
