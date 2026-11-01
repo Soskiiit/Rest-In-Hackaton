@@ -65,9 +65,10 @@ lock_timeout 5 с; миграции имеют отдельный лимит 30 
 Остановка `docker compose down` сохраняет том; `down -v` удаляет данные.
 Пароли из .env применяются init-скриптом только для нового тома: изменение .env не меняет пароль существующей роли.
 
-- players: уникальный case-sensitive login, bcrypt-хэш, профиль business/culture, координаты, поворот и баланс 500.
+- players: уникальный case-sensitive login, bcrypt-хэш, профиль business/culture, координаты, поворот, баланс 500 и флаг is_admin.
 - known_words: уникальная пара player_id + word_id и время изучения. Регистрация и стартовые слова — одна транзакция.
-- npc_relations: личная история последних 6 сообщений и снимок состояния при последнем действии этого игрока.
+- npc_relations: личная история последних 6 сообщений, снимок состояния при последнем действии этого игрока
+  и поправки администратора mianzi_offset/aggro_offset (−100…100, см. «Администратор»).
 - npc_scenes: общее актуальное состояние NPC, цена, агрессия/уважение, версия хода, последние 6 сообщений сцены и текущие варианты.
 - inventory: уникальный item_id на игрока и цена покупки.
 - purchases: подтверждённые квитанции с уникальным trade_id, покупателем, товаром и суммой. Повтор запроса не списывает деньги.
@@ -170,13 +171,14 @@ DIALOGUE без choice_id возвращает существующий общи
 | QUIZ_RESULT | {correct,item_id,new?} |
 | WORD_LEARNED | {word_id,zh,py,ru} |
 | WORLD_EDIT | {chunk_ids,player_id,login}; всем, кроме автора правки |
+| ADMIN_NPC_RELATIONS | {npc_id,shared:{mianzi,aggro,state},players:[{player_id,login,online,mianzi,aggro,mianzi_offset,aggro_offset}]}; только администратору |
 | ERROR | {code} |
 
 Ошибки: INVALID_MOVE, INVALID_CHAT, CHAT_RATE_LIMIT, RATE_LIMIT, UNKNOWN_PACKET,
 INVALID_DIALOGUE, NPC_OUT_OF_RANGE, DIALOGUE_BUSY, STALE_CHOICE, INVALID_CHOICE,
 INVALID_INSPECT, ITEM_OUT_OF_RANGE, STALE_QUIZ, INVALID_ANSWER, DB_ERROR,
 INVALID_TRADE, INVALID_PRODUCT, DIALOGUE_REQUIRED, NPC_AGGRO, ITEM_ALREADY_OWNED,
-TRADE_EXPIRED, STALE_TRADE, INSUFFICIENT_FUNDS, INVALID_WORLD_EDIT.
+TRADE_EXPIRED, STALE_TRADE, INSUFFICIENT_FUNDS, INVALID_WORLD_EDIT, ADMIN_ONLY, INVALID_ADMIN_RELATION.
 
 Редактор сохраняет карту через авторизованный HTTP API `POST /world/chunks`. Вход:
 `{"chunks":{"5_6":{"data":{...},"revision":1}}}`. Все чанки проверяются и записываются
@@ -232,6 +234,25 @@ NPC_SPEECH получают игроки в радиусе 15 с индивид�
 После WORD_LEARNED обновляется только актуальная реплика; старая реплика после покупки/отмены не возвращается.
 На NPC_STATE с пустым turn_id очищайте старые кнопки. DIALOGUE_DONE снимает ожидание и при ошибке/отключении инициатора.
 fallback:true означает резервный FSM; это нужно отображать в отладке, не выдавая его за работающую LLM.
+
+### Администратор: настроение NPC к игрокам
+
+Настроение NPC (mianzi, aggro) общее для всех игроков — на этом строится совместный торг. Администратор может задать
+NPC личное отношение к конкретному игроку: сервер хранит поправку к общему настроению, и для этого игрока
+итог = clamp(общее + поправка, 0..100). По итоговым значениям NPC ведёт себя с игроком: их получает AI в context,
+их видит игрок в NPC_STATE/NPC_SPEECH, по итоговой агрессии > 75 торговля отвечает NPC_AGGRO.
+Ответ AI по-прежнему меняет только общее настроение, поэтому поправка сохраняется и «едет» вместе с ним.
+
+Администратор — игрок с флагом в базе: `UPDATE players SET is_admin = true WHERE login = 'player1';`
+(флаг приходит в player при входе и в WELCOME; другим игрокам не передаётся).
+
+| Клиент → сервер | payload |
+|---|---|
+| ADMIN_NPC_RELATIONS | {npc_id}; список всех зарегистрированных игроков с итоговым отношением NPC к каждому |
+| ADMIN_SET_RELATION | {npc_id,player_id,mianzi,aggro}; итоговые значения 0..100; сервер сохраняет поправку = итог − общее, присылает игроку NPC_STATE (если он рядом) и администратору обновлённый ADMIN_NPC_RELATIONS |
+
+Не администратор получает ADMIN_ONLY; неизвестный NPC/игрок или значения вне 0..100 — INVALID_ADMIN_RELATION.
+Работает для всех NPC каталога (lao_wang, chef_chen, guard_zhang).
 
 ## AI: контракт для DEV-B
 
@@ -317,3 +338,11 @@ AOI у границ и при неравных размерах; FSM и AI-ко�
 недостаток денег, ошибки записи после списания, повторы и чужие квитанции, просроченные сделки,
 переподключение без рестарта, восстановление сцены и покупки после рестарта,
 радиус рассылки 15 / действий 5, таймаут и освобождение занятого NPC после отключения.
+
+### Персональное закрытие прилавка
+
+NPC_STATE содержит personal_aggro (отношение текущего игрока) и stall_closed.
+Для торговца stall_closed становится true при personal_aggro=100 и сбрасывается ниже 100.
+Диалог остаётся доступным для снижения агрессии. Ограничение торговли при личной
+агрессии выше 75 сохраняется; общая агрессия сцены не запрещает торговлю другим игрокам.
+Проверки выполняются при начале и подтверждении сделки, а также внутри транзакции покупки.

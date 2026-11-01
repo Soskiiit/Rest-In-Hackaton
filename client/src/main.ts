@@ -23,6 +23,8 @@ import { TTS } from './audio/TTS';
 import { Profiler } from './engine/Profiler';
 import { AuthScreen } from './ui/AuthScreen';
 import { AdminMetricsModal } from './ui/AdminMetricsModal';
+import { AdminRelationsPanel, NPC_DISPLAY_NAMES } from './ui/AdminRelationsPanel';
+import { pickAimedNpc, AimTarget } from './engine/NpcAim';
 import {
   AuthClient,
   AuthSession,
@@ -41,6 +43,7 @@ import {
   WordLearnedPayload,
   WorldEditPayload,
   ChunkLoadPayload,
+  AdminNpcRelationsPayload,
 } from './net/types';
 
 // Network & Transmission Configuration
@@ -136,6 +139,10 @@ class Application {
   // Modal Lock & Interaction State
   private isModalActive = false;
   private isNearLaoWang = false;
+  // Admin: NPC moods per player ([Q] while aiming at an NPC)
+  private isAdmin = false;
+  private adminPanel!: AdminRelationsPanel;
+  private readonly npcPositions = new Map<string, AimTarget & { chunk: string }>();
   private isNearTeapot = false;
   private isDialogueActive = false;
   private activeNpcId: string | null = null;
@@ -168,6 +175,7 @@ class Application {
     this.initHUD();
     this.initDialogueUI();
     this.initQuizPanel();
+    this.initAdminPanel();
     this.initWorldAndEngine();
     await this.initNetworking();
     this.bindInputAndPointerLock();
@@ -347,6 +355,48 @@ class Application {
     });
   }
 
+  private initAdminPanel(): void {
+    this.adminPanel = new AdminRelationsPanel({
+      onSave: (npcId, playerId, mianzi, aggro) => {
+        this.wsClient?.send('ADMIN_SET_RELATION', { npc_id: npcId, player_id: playerId, mianzi, aggro });
+      },
+      onClose: () => {
+        this.setModalActive(false);
+      },
+    });
+  }
+
+  /** NPC under the crosshair (screen centre), from the server's NPC positions. */
+  private aimedNpc(): string | null {
+    const camera = this.world.getCamera();
+    const direction = camera.getWorldDirection(new THREE.Vector3());
+    // Decorative NPCs placed in the editor have no mood on the server; only catalog NPCs can be picked.
+    const catalogNpcs = [...this.npcPositions.values()].filter((npc) => npc.id in NPC_DISPLAY_NAMES);
+    return pickAimedNpc(camera.position, direction, catalogNpcs);
+  }
+
+  /** [Q]: admin opens the NPC's attitude towards every player; [Q] again closes it. */
+  private handleAdminKey(event: KeyboardEvent): void {
+    if (this.editorState.isEditor() || event.repeat) return; // in the editor Q lowers the camera
+    if (this.adminPanel.isOpen()) {
+      event.preventDefault();
+      this.adminPanel.close();
+      return;
+    }
+    if (!this.isAdmin || this.isModalActive || this.authScreen?.isVisible() || this.dialogueUI?.isOpen() || this.quizPanel?.isOpen()) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target && target.closest('input, textarea, [contenteditable="true"]')) return;
+    const npcId = this.aimedNpc();
+    if (!npcId) {
+      this.hud.showToast('Наведите прицел на продавца и нажмите Q');
+      return;
+    }
+    event.preventDefault();
+    this.wsClient?.send('ADMIN_NPC_RELATIONS', { npc_id: npcId });
+  }
+
   private initWorldAndEngine(): void {
     const container = document.getElementById('canvas-container');
     if (!container) {
@@ -358,6 +408,17 @@ class Application {
 
     // 2. Initialize Player Controller (WASD + Mouse Look)
     this.playerController = new PlayerController(this.world.getCamera(), document.body);
+    this.playerController.attachLocalAvatar(this.world.getScene());
+    this.playerController.onJump(() => {
+      if (this.wsClient && this.wsClient.isConnected) {
+        this.wsClient.sendAnimation('Jump');
+      }
+    });
+    this.playerController.onEmote((action) => {
+      if (this.wsClient && this.wsClient.isConnected) {
+        this.wsClient.sendAnimation(action);
+      }
+    });
 
     // 3. Initialize Remote Players Avatar Manager
     this.otherPlayerManager = new OtherPlayerManager(this.world.getScene());
@@ -401,6 +462,13 @@ class Application {
     // 1. Remote Player Movement (Stage 1)
     client.on('PLAYER_MOVE', (payload) => {
       this.otherPlayerManager.updatePlayer(payload);
+    });
+
+    // 1b. Remote Player Animations (Jump, Wave, etc.)
+    client.on('PLAYER_ANIMATION', (payload: any) => {
+      if (payload && payload.player_id && payload.action) {
+        this.otherPlayerManager.playAnimation(payload.player_id, payload.action);
+      }
     });
 
     // 2. Economy Balance (Stage 1 & 2)
@@ -468,6 +536,9 @@ class Application {
       }
     });
     client.on('CHUNK_UNLOAD', (payload) => {
+      for (const [id, pos] of this.npcPositions) {
+        if (payload.chunk_ids.includes(pos.chunk)) this.npcPositions.delete(id);
+      }
       if (this.levelEditor.storage instanceof ServerWorldStorage) {
         for (const id of payload.chunk_ids) this.levelEditor.unloadServerChunk(id);
       }
@@ -501,9 +572,18 @@ class Application {
     });
 
     this.adminMetricsModal.setWSClient(client);
-
+    // 9. Админ: список игроков и отношение к ним выбранного продавца
+    client.on('ADMIN_NPC_RELATIONS', (payload: AdminNpcRelationsPayload) => {
+      this.adminPanel.show(payload);
+      this.setModalActive(true);
+    });
     client.on('ERROR', (payload) => {
       console.warn('[Main] Server error:', payload?.code ?? payload);
+      if (payload?.code === 'ADMIN_ONLY') {
+        this.hud.showToast('⛔ Менять настроение продавцов может только администратор');
+      } else if (payload?.code === 'INVALID_ADMIN_RELATION') {
+        this.hud.showToast('⚠️ Сервер отклонил изменение отношения продавца');
+      }
       if (payload?.code === 'INVALID_WORLD_EDIT') {
         this.hud.showToast('⚠️ Сервер отклонил изменения карты. Проверьте чанки и повторите сохранение.', 6000);
       }
@@ -599,6 +679,13 @@ class Application {
   private applyServerPlacements(chunk: ChunkLoadPayload): void {
     const [cx, cz] = chunk.chunk_id.split('_').map(Number);
     if (!Number.isInteger(cx) || !Number.isInteger(cz)) return;
+    // World positions of every NPC in this chunk, for aiming at them (admin [Q])
+    for (const [id, pos] of this.npcPositions) {
+      if (pos.chunk === chunk.chunk_id) this.npcPositions.delete(id);
+    }
+    for (const npc of chunk.npcs ?? []) {
+      this.npcPositions.set(npc.npc_id, { id: npc.npc_id, x: cx * 20 + npc.x, y: npc.y, z: cz * 20 + npc.z, chunk: chunk.chunk_id });
+    }
     for (const anchor of INTERACTION_ANCHORS) {
       const ref =
         anchor.kind === 'npc'
@@ -620,10 +707,11 @@ class Application {
 
   /** Применяет позицию, баланс и словарь игрока (из ответа входа или WELCOME). */
   private applyPlayerState(
-    player: { login: string; x: number; z: number; balance: number },
+    player: { login: string; x: number; z: number; balance: number; is_admin?: boolean; isAdmin?: boolean },
     knownWords: string[],
     moveToServerPosition: boolean
   ): void {
+    this.isAdmin = player.is_admin === true || player.isAdmin === true;
     this.playerBalance = player.balance;
     this.hud.updateBalance(player.balance);
     this.knownWords = new Set([...(knownWords || []), 'word_hello', 'word_this']);
@@ -737,6 +825,13 @@ class Application {
         event.key === 'А'
       ) {
         this.handleInteractKey(event);
+      }
+    });
+
+    // Key 'Q' admin trigger (NPC attitude towards players)
+    window.addEventListener('keydown', (event: KeyboardEvent) => {
+      if (event.code === 'KeyQ' || event.key === 'q' || event.key === 'Q' || event.key === 'й' || event.key === 'Й') {
+        this.handleAdminKey(event);
       }
     });
 
@@ -959,6 +1054,8 @@ class Application {
     }
 
     this.playTTSAudio(payload);
+    const reaction = (payload.aggro ?? 0) >= 40 ? 'Angry' : 'Wave';
+    this.world.triggerNpcReaction?.(payload.npc_id, reaction);
     this.setModalActive(true);
     this.hideInteractionPrompt();
 
@@ -1038,6 +1135,8 @@ class Application {
 
     // 3. Play TTS audio from AI service (Base64 WAV)
     this.playTTSAudio(payload);
+    const reaction = (payload.aggro ?? 0) >= 40 ? 'Angry' : 'Wave';
+    this.world.triggerNpcReaction?.(payload.npc_id, reaction);
 
     // 4. Open DialogueUI
     this.dialogueUI.open(
@@ -1086,11 +1185,16 @@ class Application {
   private handleNpcState(payload: NpcStatePayload): void {
     console.log(`[Main] NPC_STATE received: mianzi=${payload.mianzi}, aggro=${payload.aggro}, state=${payload.state}`);
 
-    if (this.dialogueUI && this.dialogueUI.isOpen()) {
+    if (typeof payload.stall_closed === 'boolean') {
+      this.world.setMerchantClosed(payload.npc_id, payload.stall_closed);
+    }
+    const aggro = payload.personal_aggro ?? payload.aggro;
+    if (this.dialogueUI && this.dialogueUI.isOpen() && this.activeNpcId === payload.npc_id) {
+      this.dialogueUI.updateStallClosed?.(payload.stall_closed ?? false);
       if (typeof this.dialogueUI.updateState === 'function') {
-        this.dialogueUI.updateState(payload.mianzi, payload.aggro);
+        this.dialogueUI.updateState(payload.mianzi, aggro);
       } else if (typeof (this.dialogueUI as any).updateGauges === 'function') {
-        (this.dialogueUI as any).updateGauges(payload.mianzi, payload.aggro);
+        (this.dialogueUI as any).updateGauges(payload.mianzi, aggro);
       }
 
       // If state signifies dialogue conclusion
@@ -1145,7 +1249,12 @@ class Application {
     } else if (isNearLao) {
       this.showInteractionPrompt(LAO_WANG_CONFIG.promptKey, LAO_WANG_CONFIG.promptText);
     } else {
-      this.hideInteractionPrompt();
+      const aimed = this.isAdmin ? this.aimedNpc() : null;
+      if (aimed) {
+        this.showInteractionPrompt('Q', `Отношение продавца: ${NPC_DISPLAY_NAMES[aimed] ?? aimed}`);
+      } else {
+        this.hideInteractionPrompt();
+      }
     }
   }
 

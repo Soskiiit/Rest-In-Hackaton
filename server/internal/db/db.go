@@ -31,6 +31,7 @@ type Player struct {
 	Z            float64 `json:"z"`
 	Rotation     float64 `json:"rotation"`
 	Balance      int     `json:"balance"`
+	IsAdmin      bool    `json:"is_admin"`
 }
 type Item struct {
 	ID        string `json:"item_id"`
@@ -155,10 +156,10 @@ func (s *Store) Register(ctx context.Context, login, hash, profile string, words
 	return s.Player(ctx, id)
 }
 
-const playerCols = "id,login,password_hash,profile,pos_x,pos_z,rotation,balance"
+const playerCols = "id,login,password_hash,profile,pos_x,pos_z,rotation,balance,is_admin"
 
 func scanPlayer(row *sql.Row) (p Player, err error) {
-	err = row.Scan(&p.ID, &p.Login, &p.PasswordHash, &p.Profile, &p.X, &p.Z, &p.Rotation, &p.Balance)
+	err = row.Scan(&p.ID, &p.Login, &p.PasswordHash, &p.Profile, &p.X, &p.Z, &p.Rotation, &p.Balance, &p.IsAdmin)
 	return
 }
 func (s *Store) Player(ctx context.Context, id int64) (Player, error) {

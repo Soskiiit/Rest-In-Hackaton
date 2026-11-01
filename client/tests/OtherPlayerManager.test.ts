@@ -187,3 +187,115 @@ describe('OtherPlayerManager placeholder avatars and nicknames', () => {
     expect(scene.children).toHaveLength(0);
   });
 });
+
+describe('OtherPlayerManager comical tourist avatar and animations', () => {
+  let scene: THREE.Scene;
+  let manager: OtherPlayerManager;
+  let touristGltf: any;
+
+  beforeEach(async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+    const glbPath = path.resolve(__dirname, '../public/models/comical_tourist.glb');
+    const bytes = fs.readFileSync(glbPath);
+    const loader = new GLTFLoader();
+    touristGltf = await loader.parseAsync(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), '');
+
+    scene = new THREE.Scene();
+    manager = new OtherPlayerManager(scene);
+  });
+
+  it('should attach comical tourist model and preserve all 7 animations', () => {
+    manager.setTouristTemplate(touristGltf);
+    manager.updatePlayer({ player_id: 10, x: 50, z: 50, rotation: 0, login: 'TouristBob' });
+
+    const clips = manager.getPlayerClips(10);
+    expect(clips).toContain('Idle');
+    expect(clips).toContain('Walk');
+    expect(clips).toContain('Run');
+    expect(clips).toContain('Wave');
+    expect(clips).toContain('Angry');
+    expect(clips).toContain('Jump');
+    expect(clips).toContain('FallBack');
+    expect(clips).toHaveLength(7);
+
+    // Initial state should be Idle
+    expect(manager.getCurrentClip(10)).toBe('Idle');
+  });
+
+  it('should upgrade existing placeholder avatar when tourist template is applied', () => {
+    // Spawn player before template is loaded
+    manager.setTouristTemplate(null);
+    manager.updatePlayer({ player_id: 11, x: 20, z: 20, rotation: 0 });
+
+    // Should initially have placeholder meshes
+    let meshCountBefore = 0;
+    scene.traverse((o) => {
+      if (o instanceof THREE.Mesh) meshCountBefore++;
+    });
+    expect(meshCountBefore).toBe(2);
+
+    // Apply comical tourist template
+    manager.setTouristTemplate(touristGltf);
+
+    // Should now have the full comical tourist hierarchy (> 30 meshes)
+    let meshCountAfter = 0;
+    scene.traverse((o) => {
+      if (o instanceof THREE.Mesh) meshCountAfter++;
+    });
+    expect(meshCountAfter).toBeGreaterThan(30);
+    expect(manager.getCurrentClip(11)).toBe('Idle');
+  });
+
+  it('should switch between Idle, Walk, and Run based on movement speed', () => {
+    manager.setTouristTemplate(touristGltf);
+    manager.updatePlayer({ player_id: 12, x: 0, z: 0, rotation: 0 });
+    expect(manager.getCurrentClip(12)).toBe('Idle');
+
+    // 1. Move at normal walking speed (0.6 units over 0.1s = 6.0 m/s)
+    manager.updatePlayer({ player_id: 12, x: 0.6, z: 0, rotation: 0 });
+    manager.update(0.1);
+    expect(manager.getCurrentClip(12)).toBe('Walk');
+
+    // 2. Sprinting movement (1.1 units over 0.1s = 11.0 m/s)
+    manager.updatePlayer({ player_id: 12, x: 1.7, z: 0, rotation: 0 });
+    manager.update(0.1);
+    expect(manager.getCurrentClip(12)).toBe('Run');
+
+    // 3. Arrived at target position: speed drops to 0, returns to Idle
+    for (let i = 0; i < 20; i++) {
+      manager.update(0.1);
+    }
+    expect(manager.getCurrentClip(12)).toBe('Idle');
+  });
+
+  it('should trigger and play one-shot emote actions like Wave, Angry, Jump, and FallBack', () => {
+    manager.setTouristTemplate(touristGltf);
+    manager.updatePlayer({ player_id: 13, x: 10, z: 10, rotation: 0 });
+
+    expect(manager.getCurrentClip(13)).toBe('Idle');
+
+    const playedWave = manager.playAnimation(13, 'Wave');
+    expect(playedWave).toBe(true);
+    expect(manager.getCurrentClip(13)).toBe('Wave');
+
+    const playedAngry = manager.playAnimation(13, 'Angry');
+    expect(playedAngry).toBe(true);
+    expect(manager.getCurrentClip(13)).toBe('Angry');
+
+    const playedJump = manager.playAnimation(13, 'Jump');
+    expect(playedJump).toBe(true);
+    expect(manager.getCurrentClip(13)).toBe('Jump');
+  });
+
+  it('should dispose tourist model, mixer, and resources on removePlayer', () => {
+    manager.setTouristTemplate(touristGltf);
+    manager.updatePlayer({ player_id: 14, x: 15, z: 15, rotation: 0 });
+    expect(manager.hasPlayer(14)).toBe(true);
+
+    manager.removePlayer(14);
+    expect(manager.hasPlayer(14)).toBe(false);
+    expect(scene.children).toHaveLength(0);
+  });
+});

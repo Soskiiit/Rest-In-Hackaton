@@ -481,7 +481,7 @@ describe('AssetCatalogUI Component', () => {
     expect(ui.getActiveTab()).toBe('npcs');
 
     const itemCards = mockDoc.body.querySelectorAll('.catalog-item-card');
-    expect(itemCards.length).toBe(5); // 5 NPCs registered
+    expect(itemCards.length).toBe(catalog.getAssetsByCategory('npcs').length);
 
     // Switch to Structures
     ui.setActiveTab('structures');

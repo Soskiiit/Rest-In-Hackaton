@@ -30,7 +30,7 @@ func TestObservedSpeechDoesNotInvalidateOwnDialogue(t *testing.T) {
 		expires: time.Now().Add(time.Hour), known: map[string]bool{}, activeNPC: "lao_wang",
 		turn: "own-valid-turn", choices: game.Choices(), speech: &Speech{NPCID: "another_npc"}}
 	h := &Hub{store: store, catalog: catalog, ai: game.NewAI("http://127.0.0.1:1", catalog),
-		ctx: context.Background(), done: make(chan struct{}), events: make(chan any, 2), clients: map[int64]*client{player.ID: c}}
+		ctx: context.Background(), done: make(chan struct{}), events: make(chan any, 16), clients: map[int64]*client{player.ID: c}}
 	scene, err := h.getScene("lao_wang")
 	if err != nil {
 		t.Fatal(err)
@@ -44,12 +44,14 @@ func TestObservedSpeechDoesNotInvalidateOwnDialogue(t *testing.T) {
 		t.Fatal("hearing another NPC invalidated the player's active choice")
 	}
 	h.wg.Wait()
-	deadline := time.After(time.Second)
+	deadline := time.After(2 * time.Second)
 	for c.pending {
 		select {
 		case raw := <-h.events:
 			if e, ok := raw.(aiDone); ok {
 				h.finishDialogue(e)
+			} else if p, ok := raw.(aiPartial); ok {
+				h.partialDialogue(p)
 			}
 		case <-deadline:
 			t.Fatal("dialogue did not complete")

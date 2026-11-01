@@ -119,11 +119,21 @@ func (h *Hub) offers(npc string) []string {
 	sort.Strings(out)
 	return out
 }
-func (h *Hub) state(s *liveScene) map[string]any {
-	return map[string]any{"npc_id": s.data.NPCID, "state": s.data.State, "mianzi": s.data.Mianzi, "aggro": s.data.Aggro, "price": s.data.Price, "scene_version": s.data.Version, "turn_id": turnID(s), "offers": h.offers(s.data.NPCID), "busy": s.owner != nil}
+func (h *Hub) state(s *liveScene, c *client) map[string]any {
+	state := map[string]any{"npc_id": s.data.NPCID, "state": s.data.State, "mianzi": s.data.Mianzi, "aggro": s.data.Aggro, "price": s.data.Price, "scene_version": s.data.Version, "turn_id": turnID(s), "offers": h.offers(s.data.NPCID), "busy": s.owner != nil}
+	npc := h.catalog.NPCs[s.data.NPCID]
+	relation, err := h.store.Relation(h.ctx, c.player.ID, npc.ID, npc.Price, npc.Floor)
+	if err != nil {
+		h.fail(c, "DB_ERROR")
+		return state
+	}
+	state["personal_aggro"] = relation.Aggro
+	state["stall_closed"] = npc.Kind == "merchant" && relation.Aggro >= 100
+	return state
 }
 func (h *Hub) sendScene(c *client, s *liveScene) {
-	h.emit(c, "NPC_STATE", h.state(s))
+	state := h.state(s, c)
+	h.emit(c, "NPC_STATE", state)
 	if s.stored == nil {
 		return
 	}
@@ -143,6 +153,10 @@ func (h *Hub) sendScene(c *client, s *liveScene) {
 		SceneVersion: s.data.Version,
 		AudioBase64:  p.AudioBase64,
 	}
+	if aggro, ok := state["personal_aggro"].(int); ok {
+		speech.Aggro = aggro
+	}
+	speech.StallClosed, _ = state["stall_closed"].(bool)
 	npc := h.catalog.NPCs[s.data.NPCID]
 	if game.Near(c.player.X, c.player.Z, npc.X, npc.Z, interactionRadius) {
 		speech.TurnID = turnID(s)
@@ -213,7 +227,7 @@ func (h *Hub) dialogueDone(s *liveScene, status string) {
 	}
 	npc := h.catalog.NPCs[s.data.NPCID]
 	for _, observer := range h.nearby(npc.X, npc.Z, speechRadius) {
-		h.emit(observer, "NPC_STATE", h.state(s))
+		h.emit(observer, "NPC_STATE", h.stateFor(observer, s))
 		h.emit(observer, "DIALOGUE_DONE", map[string]any{"npc_id": npc.ID, "status": status, "scene_version": s.data.Version})
 	}
 }
