@@ -83,10 +83,10 @@ export class World {
     this.container = container;
     this.config = { ...DEFAULT_WORLD_CONFIG, ...config };
 
-    // 1. Scene setup with night market background and FogExp2
+    // 1. Scene setup with pure solid sky blue background (no clouds, no fog)
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(this.config.fogColor);
-    this.scene.fog = new THREE.FogExp2(this.config.fogColor, this.config.fogDensity);
+    this.scene.background = new THREE.Color(0x87ceeb); // Pure sky blue
+    // Fog disabled per user request: clear crisp sky and distant visibility
 
     // 2. Camera setup (Perspective, FOV 75, initial eye position centered in 200x200 world)
     const aspect = container.clientWidth / (container.clientHeight || 1);
@@ -139,18 +139,191 @@ export class World {
     window.addEventListener('resize', this.onResize);
   }
 
+  // Cached cloudy sky texture
+  private static cloudSkyTexture: THREE.CanvasTexture | null = null;
+  // Cached grass texture for outer landscape
+  private static grassTexture: THREE.CanvasTexture | null = null;
+
+  /**
+   * Generates a high-performance, seamless cloudy sky texture via HTML5 Canvas.
+   * Cached statically so it generates only once with zero runtime overhead.
+   */
+  public static createCloudSkyTexture(): THREE.Texture | null {
+    if (this.cloudSkyTexture) {
+      return this.cloudSkyTexture;
+    }
+    if (typeof document === 'undefined') {
+      return null;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    // 1. Sky atmospheric gradient: deep azure twilight at top transitioning to soft fog tint at horizon
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, 512);
+    skyGrad.addColorStop(0.0, '#3a5f82'); // Deep atmospheric sky zenith
+    skyGrad.addColorStop(0.5, '#6a8fa8'); // Mid sky blue
+    skyGrad.addColorStop(0.85, '#99b6c9'); // Soft horizon matching fogColor exactly
+    skyGrad.addColorStop(1.0, '#99b6c9'); // Seamless blend into scene fog at base
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, 1024, 512);
+
+    // 2. Soft, puffy clouds with organic layering
+    const cloudClusters = [
+      // Upper dramatic cumulus clouds
+      { x: 180, y: 130, scale: 95, puffs: 10, alpha: 0.65 },
+      { x: 490, y: 110, scale: 120, puffs: 12, alpha: 0.70 },
+      { x: 820, y: 140, scale: 105, puffs: 11, alpha: 0.60 },
+      // Mid-level fluffy clouds
+      { x: 120, y: 220, scale: 75, puffs: 8, alpha: 0.50 },
+      { x: 340, y: 240, scale: 85, puffs: 9, alpha: 0.55 },
+      { x: 670, y: 210, scale: 90, puffs: 10, alpha: 0.52 },
+      { x: 960, y: 230, scale: 80, puffs: 8, alpha: 0.48 },
+      // Gentle wispy cirrus streaks near horizon
+      { x: 260, y: 320, scale: 140, puffs: 6, alpha: 0.35 },
+      { x: 740, y: 330, scale: 150, puffs: 7, alpha: 0.38 },
+    ];
+
+    for (const cluster of cloudClusters) {
+      for (let p = 0; p < cluster.puffs; p++) {
+        const offsetX = (Math.sin(p * 2.3) * 0.8) * cluster.scale;
+        const offsetY = (Math.cos(p * 3.1) * 0.35) * (cluster.scale * 0.5);
+        const radius = (0.45 + (p % 4) * 0.18) * cluster.scale;
+
+        const cx = (cluster.x + offsetX + 1024) % 1024;
+        const cy = cluster.y + offsetY;
+
+        // Radial cloud puff with soft illuminated core and feather edges
+        const puffGrad = ctx.createRadialGradient(cx, cy, radius * 0.1, cx, cy, radius);
+        puffGrad.addColorStop(0.0, `rgba(255, 255, 255, ${cluster.alpha})`);
+        puffGrad.addColorStop(0.4, `rgba(240, 246, 252, ${cluster.alpha * 0.75})`);
+        puffGrad.addColorStop(0.75, `rgba(215, 230, 242, ${cluster.alpha * 0.35})`);
+        puffGrad.addColorStop(1.0, 'rgba(215, 230, 242, 0)');
+
+        ctx.fillStyle = puffGrad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Wrap-around handling for seamless horizontal spherical mapping
+        if (cx - radius < 0) {
+          ctx.beginPath();
+          ctx.arc(cx + 1024, cy, radius, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (cx + radius > 1024) {
+          ctx.beginPath();
+          ctx.arc(cx - 1024, cy, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+
+    this.cloudSkyTexture = texture;
+    return texture;
+  }
+
+  /**
+   * Generates a procedural grass texture with organic blades, mossy variations, and subtle clovers.
+   */
+  public static createGrassTexture(): THREE.Texture | null {
+    if (this.grassTexture) {
+      return this.grassTexture;
+    }
+
+    if (typeof document === 'undefined') {
+      return null;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    // 1. Base is exactly SCENE_COLORS.floorColor (#4f7d2c)
+    // The canvas is fully filled with the exact floorColor so the base floor tone is 100% preserved
+    ctx.fillStyle = '#4f7d2c';
+    ctx.fillRect(0, 0, 512, 512);
+
+    // 2. Visible yet balanced organic grass & moss patches
+    for (let i = 0; i < 40; i++) {
+      const cx = (Math.sin(i * 19.3) * 0.5 + 0.5) * 512;
+      const cy = (Math.cos(i * 29.7) * 0.5 + 0.5) * 512;
+      const rad = 25 + (i % 6) * 16;
+
+      const grad = ctx.createRadialGradient(cx, cy, 2, cx, cy, rad);
+      if (i % 2 === 0) {
+        grad.addColorStop(0, 'rgba(52, 90, 28, 0.28)'); // natural shadow
+        grad.addColorStop(1, 'rgba(79, 125, 44, 0)');
+      } else {
+        grad.addColorStop(0, 'rgba(115, 175, 65, 0.28)'); // sunlit fresh patch
+        grad.addColorStop(1, 'rgba(79, 125, 44, 0)');
+      }
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 3. Crisp, well-defined grass blades across the lawn
+    for (let b = 0; b < 2400; b++) {
+      const bx = ((b * 137.5) % 512);
+      const by = ((b * 269.3) % 512);
+      const bladeH = 5 + (b % 6);
+      const angle = (Math.sin(b * 12.3) * 0.42);
+
+      const colorVariant = b % 4;
+      if (colorVariant === 0) {
+        ctx.strokeStyle = 'rgba(52, 90, 28, 0.42)'; // darker blade
+      } else if (colorVariant === 1) {
+        ctx.strokeStyle = 'rgba(115, 175, 65, 0.45)'; // bright blade
+      } else if (colorVariant === 2) {
+        ctx.strokeStyle = 'rgba(64, 106, 36, 0.38)'; // medium blade
+      } else {
+        ctx.strokeStyle = 'rgba(138, 198, 75, 0.35)'; // light clover blade
+      }
+
+      ctx.lineWidth = 1.0;
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + Math.sin(angle) * bladeH, by - Math.cos(angle) * bladeH);
+      ctx.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(50, 50); // 50x50 tiling across 200m -> ~4m per tile, very detailed and distinct grass tufts
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+
+    this.grassTexture = texture;
+    return texture;
+  }
+
   /**
    * Initializes the 200x200 ground floor and 10x10 chunk boundary grid helper.
    */
   private initGroundFloor(): void {
     const halfSize = this.config.floorSize / 2;
 
+    const grassTex = World.createGrassTexture();
     const floorGeo = new THREE.PlaneGeometry(this.config.floorSize, this.config.floorSize, 40, 40);
-    const floorMat = new THREE.MeshStandardMaterial({
-      color: SCENE_COLORS.floorColor,
-      roughness: 0.85,
-      metalness: 0.15,
-    });
+    const floorMatConfig: THREE.MeshStandardMaterialParameters = {
+      color: grassTex ? 0xffffff : SCENE_COLORS.floorColor,
+      roughness: 0.9,
+      metalness: 0.05,
+    };
+    if (grassTex) {
+      floorMatConfig.map = grassTex;
+    }
+    const floorMat = new THREE.MeshStandardMaterial(floorMatConfig);
     this.floorMesh = new THREE.Mesh(floorGeo, floorMat);
     this.floorMesh.rotation.x = -Math.PI / 2;
     this.floorMesh.position.set(halfSize, 0, halfSize);
@@ -211,17 +384,50 @@ export class World {
         // Scale tile geometry so each unit is exactly 2.0 x 2.0 meters
         mergedGeo.scale(4.03, 1.0, 2.045);
 
-        // Populate tiles covering the playable market area with generous margins [42, 158] x [54, 154]
-        // Outside these coordinates are tall 8.5m solid exterior walls and fog
-        const startX = 42;
-        const endX = 158;
-        const startZ = 54;
-        const endZ = 154;
+        // Populate tiles covering strictly the market corridors and plaza walkways
+        // Anywhere outside the market streets (like behind perimeter walls, entrance courtyard margins, etc.)
+        // remains natural green grass terrain!
+        const isMarketStreet = (x: number, z: number): boolean => {
+          // 1. South Entrance Avenue: x in [94, 106], z in [60, 93]
+          if (x >= 94 && x <= 106 && z >= 60 && z <= 93) return true;
+
+          // 2. Crossroads & North Central Bazaar Plaza:
+          // Crossroads: x in [90, 110], z in [93, 107]
+          // North Bazaar: x in [80, 120], z in [107, 145]
+          if (x >= 90 && x <= 110 && z >= 93 && z <= 107) return true;
+          if (x >= 80 && x <= 120 && z >= 107 && z <= 145) return true;
+
+          // 3. West Corridor & West Plaza:
+          // Corridor: x in [70, 90], z in [94, 106]
+          // Plaza: x in [48, 70], z in [88, 112]
+          if (x >= 70 && x <= 90 && z >= 94 && z <= 106) return true;
+          if (x >= 48 && x <= 70 && z >= 88 && z <= 112) return true;
+
+          // 4. East Corridor & East Plaza:
+          // Corridor: x in [110, 130], z in [94, 106]
+          // Plaza: x in [130, 152], z in [88, 112]
+          if (x >= 110 && x <= 130 && z >= 94 && z <= 106) return true;
+          if (x >= 130 && x <= 152 && z >= 88 && z <= 112) return true;
+
+          return false;
+        };
+
+        const startX = 48;
+        const endX = 152;
+        const startZ = 60;
+        const endZ = 145;
         const step = 2.0;
 
-        const countX = Math.round((endX - startX) / step);
-        const countZ = Math.round((endZ - startZ) / step);
-        const totalInstances = countX * countZ;
+        const tilePositions: Array<{ x: number; z: number }> = [];
+        for (let x = startX; x <= endX; x += step) {
+          for (let z = startZ; z <= endZ; z += step) {
+            if (isMarketStreet(x, z)) {
+              tilePositions.push({ x, z });
+            }
+          }
+        }
+
+        const totalInstances = tilePositions.length;
 
         const instancedMesh = new THREE.InstancedMesh(
           mergedGeo,
@@ -232,16 +438,11 @@ export class World {
         instancedMesh.castShadow = false;
 
         const dummy = new THREE.Object3D();
-        let idx = 0;
-
-        for (let ix = 0; ix < countX; ix++) {
-          const posX = startX + ix * step + 1;
-          for (let iz = 0; iz < countZ; iz++) {
-            const posZ = startZ + iz * step + 1;
-            dummy.position.set(posX, 0.015, posZ);
-            dummy.updateMatrix();
-            instancedMesh.setMatrixAt(idx++, dummy.matrix);
-          }
+        for (let idx = 0; idx < totalInstances; idx++) {
+          const pt = tilePositions[idx];
+          dummy.position.set(pt.x, 0.015, pt.z);
+          dummy.updateMatrix();
+          instancedMesh.setMatrixAt(idx, dummy.matrix);
         }
 
         instancedMesh.instanceMatrix.needsUpdate = true;
@@ -303,20 +504,7 @@ export class World {
    */
   private initMarketLanterns(): void {
     this.scene.add(this.lanternsGroup);
-
-    const half = this.config.floorSize / 2;
-    const lanternPositions = [
-      { x: half - 12, y: 3.8, z: half - 12 },
-      { x: half + 12, y: 3.8, z: half - 12 },
-      { x: half - 12, y: 3.8, z: half + 12 },
-      { x: half + 12, y: 3.8, z: half + 12 },
-      { x: half, y: 4.5, z: half - 25 },
-      { x: half, y: 4.5, z: half + 25 },
-    ];
-
-    for (const pos of lanternPositions) {
-      this.addLantern(pos.x, pos.y, pos.z, SCENE_COLORS.lanternBodyColor, this.config.lanternIntensity, this.config.lanternDistance);
-    }
+    // Legacy floating lanterns in the sky disabled per user request
   }
 
   /**

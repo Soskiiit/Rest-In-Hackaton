@@ -417,8 +417,9 @@ export class MarketLayout {
     root.add(centralPavilion);
 
     // 4. Overhead wires with hanging lanterns stretched from wall to wall across corridors and plazas
-    const overheadStringsGroup = this.buildOverheadLanternStrings();
-    root.add(overheadStringsGroup);
+    // (Removed per user request to keep the sky clear and free of black flying lines/rectangles)
+    // const overheadStringsGroup = this.buildOverheadLanternStrings();
+    // root.add(overheadStringsGroup);
 
     // Freeze local matrices on all static meshes to eliminate scene.updateMatrixWorld CPU overhead
     root.traverse((child) => {
