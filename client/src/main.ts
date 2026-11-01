@@ -12,6 +12,8 @@ import { AppMode, EditorStateManager } from './editor/EditorState';
 import { EditorCamera } from './editor/EditorCamera';
 import { PlayerGhostBeacon } from './editor/PlayerGhostBeacon';
 import { LevelEditor } from './editor/LevelEditor';
+import { ServerWorldStorage } from './editor/ChunkStorage';
+import { sanitizeChunkData } from './editor/ChunkPersistence';
 import { WSClient } from './net/WSClient';
 import { MockServer } from './net/MockServer';
 import { HUD } from './ui/HUD';
@@ -36,6 +38,8 @@ import {
   PlayerLeavePayload,
   WelcomePayload,
   WordLearnedPayload,
+  WorldEditPayload,
+  ChunkLoadPayload,
 } from './net/types';
 
 // Network & Transmission Configuration
@@ -76,6 +80,15 @@ export const TEAPOT_CONFIG = {
     { id: 4, text: 'Тарелка', correct: false },
   ],
 };
+
+/**
+ * Interaction points follow the server: when the level editor moves an NPC or item, the client prompt
+ * moves by the same offset from the place the server catalog puts it by default (server/world/catalog.json).
+ */
+const INTERACTION_ANCHORS = [
+  { kind: 'npc', id: 'lao_wang', config: LAO_WANG_CONFIG, serverHome: { x: 100, z: 124 }, clientHome: { ...LAO_WANG_CONFIG.worldPosition } },
+  { kind: 'item', id: 'teapot', config: TEAPOT_CONFIG, serverHome: { x: 101, z: 124 }, clientHome: { ...TEAPOT_CONFIG.worldPosition } },
+] as const;
 
 class Application {
   private world!: World;
@@ -341,6 +354,12 @@ class Application {
   }
 
   private wireNetworkHandlers(client: WSClient): void {
+    client.onConnectionChange((state) => {
+      if (state === 'open' && !client.isMockMode) {
+        this.hud.setWsStatus('connected');
+        void this.levelEditor.saveAllDirtyChunks(true);
+      }
+    });
     // 1. Remote Player Movement (Stage 1)
     client.on('PLAYER_MOVE', (payload) => {
       this.otherPlayerManager.updatePlayer(payload);
@@ -394,14 +413,41 @@ class Application {
         x: payload.x,
         z: payload.z,
         rotation: payload.rotation,
+        login: payload.login,
       });
     });
     client.on('PLAYER_LEAVE', (payload: PlayerLeavePayload) => {
       this.otherPlayerManager.removePlayer(payload.player_id);
     });
 
+    // 7. Чанки от сервера: где сейчас стоят Лао Ван и чайник (после правок редактора — на новом месте)
+    client.on('CHUNK_LOAD', (payload: ChunkLoadPayload) => {
+      this.applyServerPlacements(payload);
+      if (this.levelEditor.storage instanceof ServerWorldStorage && payload.revision) {
+        const data = sanitizeChunkData(payload);
+        if (this.levelEditor.storage.isCurrent(data.chunk_id, payload.revision) &&
+            this.levelEditor.applyServerChunk(data)) this.levelEditor.storage.noteChunk(data, payload.revision);
+      }
+    });
+    client.on('CHUNK_UNLOAD', (payload) => {
+      if (this.levelEditor.storage instanceof ServerWorldStorage) {
+        for (const id of payload.chunk_ids) this.levelEditor.unloadServerChunk(id);
+      }
+    });
+
+    // 7a. Другой игрок сохранил правки в редакторе уровней: перечитываем эти чанки
+    client.on('WORLD_EDIT', (payload: WorldEditPayload) => {
+      void this.levelEditor.reloadChunks(payload.chunk_ids).then((reloaded) => {
+        if (reloaded > 0) {
+          this.hud.showToast(`${payload.login ?? 'Другой игрок'} изменил карту`);
+        }
+      });
+    });
+
     // 8. Сервер закрыл соединение: 1008 = этот аккаунт уже в игре
     client.on('CONNECTION_CLOSED', (payload: ConnectionClosedPayload) => {
+      this.otherPlayerManager.clear();
+      this.hud.setWsStatus('disconnected');
       if (payload.code === 1008) {
         void this.handleSessionRejected(
           'Этот аккаунт уже в игре на другом устройстве. Войдите под другим логином.'
@@ -411,6 +457,9 @@ class Application {
 
     client.on('ERROR', (payload) => {
       console.warn('[Main] Server error:', payload?.code ?? payload);
+      if (payload?.code === 'INVALID_WORLD_EDIT') {
+        this.hud.showToast('⚠️ Сервер отклонил изменения карты. Проверьте чанки и повторите сохранение.', 6000);
+      }
     });
   }
 
@@ -475,6 +524,7 @@ class Application {
     const authClient = this.authClient!;
     this.wsClient?.disconnect();
 
+    this.levelEditor.storage = new ServerWorldStorage(authClient.apiBase, session.token);
     const client = new WSClient({ url: wsUrlFor(authClient.apiBase, session.token), mock: false });
     this.wsClient = client;
     this.wireNetworkHandlers(client);
@@ -492,6 +542,32 @@ class Application {
       client.disconnect();
       this.hud.setWsStatus('disconnected');
       return false;
+    }
+  }
+
+  /**
+   * Moves the Lao Wang / teapot interaction points to where the server's chunk says they stand.
+   * If their chunk arrives without them (removed in the editor), the prompt is disabled.
+   */
+  private applyServerPlacements(chunk: ChunkLoadPayload): void {
+    const [cx, cz] = chunk.chunk_id.split('_').map(Number);
+    if (!Number.isInteger(cx) || !Number.isInteger(cz)) return;
+    for (const anchor of INTERACTION_ANCHORS) {
+      const ref =
+        anchor.kind === 'npc'
+          ? chunk.npcs?.find((n) => n.npc_id === anchor.id)
+          : chunk.items?.find((i) => i.item_id === anchor.id);
+      const { config } = anchor;
+      if (ref) {
+        config.worldPosition.x = anchor.clientHome.x + (cx * 20 + ref.x - anchor.serverHome.x);
+        config.worldPosition.z = anchor.clientHome.z + (cz * 20 + ref.z - anchor.serverHome.z);
+        config.chunkCoord.cx = cx;
+        config.chunkCoord.cz = cz;
+      } else if (config.chunkCoord.cx === cx && config.chunkCoord.cz === cz && (chunk.npcs || chunk.items)) {
+        // NaN makes every distance check fail: nothing to talk to or inspect here any more.
+        config.worldPosition.x = NaN;
+        config.worldPosition.z = NaN;
+      }
     }
   }
 

@@ -4,11 +4,9 @@ services:
   db:
     image: postgres:18.6
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python3 server/scripts/setup_env.py}
-      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run python3 server/scripts/setup_env.py}
-    ports:
-      - "127.0.0.1:5433:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-8bbcd5fdc3060ee3c2f2e6cadca68b9b294fcc512b99f34545c1b9b46755840b}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-a5de9127a1d85d312af580ebadb6887dd201013ea5b400490625bcc30df67197}
     volumes:
       - pgdata:/var/lib/postgresql
       - ./server/docker/init-db.sh:/docker-entrypoint-initdb.d/10-project.sh:ro
@@ -25,9 +23,8 @@ services:
       dockerfile: Dockerfile
     environment:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      LLAMA_SERVER_URL: ${LLAMA_SERVER_URL:-http://host.docker.internal:8080}
       TTS_ENGINE: ${TTS_ENGINE:-formant}
-    ports:
-      - "127.0.0.1:8000:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -38,14 +35,12 @@ services:
       dockerfile: docker/Dockerfile
     environment:
       SERVER_ADDR: ":3000"
-      DATABASE_URL: postgres://hackaton:${APP_DB_PASSWORD}@db:5432/hackaton?sslmode=disable
-      JWT_SECRET: ${JWT_SECRET:?Run python3 server/scripts/setup_env.py}
+      DATABASE_URL: postgres://hackaton:${APP_DB_PASSWORD:-a5de9127a1d85d312af580ebadb6887dd201013ea5b400490625bcc30df67197}@db:5432/hackaton?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-a6950cbb7ae4893f387d711833cefafe0eea6caa02eca69f28814b458c437f72}
       WORLD_DIR: world/chunks
       CATALOG_PATH: world/catalog.json
       AI_URL: http://ai:8000
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
-    ports:
-      - "127.0.0.1:3000:3000"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://localhost,https://127.0.0.1,http://localhost,http://127.0.0.1,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080}
     depends_on:
       db:
         condition: service_healthy
@@ -57,10 +52,24 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
-    ports:
-      - "127.0.0.1:8080:80"
     depends_on:
       - server
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      client:
+        condition: service_started
+      server:
+        condition: service_started
     restart: unless-stopped
 
 volumes:

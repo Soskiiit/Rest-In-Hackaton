@@ -78,6 +78,8 @@ func (h *Hub) dialogue(c *client, raw []byte) {
 		h.emit(observer, "NPC_STATE", h.state(s))
 	}
 	h.wg.Add(1)
+	// WORLD_EDIT swaps h.catalog in the hub loop; the goroutine keeps its own snapshot.
+	catalog := h.catalog
 	go func() {
 		defer h.wg.Done()
 		ctx, cancel := context.WithTimeout(c.ctx, 45*time.Second)
@@ -100,7 +102,7 @@ func (h *Hub) dialogue(c *client, raw []byte) {
 		fallback := err != nil
 		if fallback {
 			log.Printf("AI fallback npc=%s: %v", npc.ID, err)
-			fbReply := game.Fallback(relation, choice, h.catalog)
+			fbReply := game.Fallback(relation, choice, catalog)
 			if streamPartialReceived && len(deliveredPartial.Tokens) > 0 {
 				// Preserve the partial speech the player already saw/heard! Do not wipe it out with fallback text!
 				reply = game.Reply{

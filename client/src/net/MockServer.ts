@@ -1,6 +1,7 @@
 import {
   Packet,
   PlayerMovePayload,
+  PlayerJoinPayload,
   NpcSpeechPayload,
   BalancePayload,
   WordLearnedPayload,
@@ -80,8 +81,16 @@ export class MockServer {
       delta: 0,
     } as BalancePayload);
 
-    // 2. Initial player avatar spawns
+    // 2. Initial player avatar spawns, with nicknames as the real server sends them
     for (const bot of this.bots) {
+      this.emit('PLAYER_JOIN', {
+        id: bot.id,
+        login: bot.name,
+        profile: 'culture',
+        x: bot.x,
+        z: bot.z,
+        rotation: bot.rotation,
+      } as PlayerJoinPayload);
       this.emit('PLAYER_MOVE', {
         player_id: bot.id,
         x: bot.x,

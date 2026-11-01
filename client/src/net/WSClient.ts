@@ -83,10 +83,8 @@ export class WSClient {
     }
 
     if (typeof WebSocket === 'undefined') {
-      console.warn('[WSClient] Native WebSocket unavailable, falling back to MockServer.');
-      this.isMock = true;
-      this.initMockServer();
-      return Promise.resolve();
+      this.setConnectionState('closed');
+      return Promise.reject(new Error('[WSClient] WebSocket unavailable'));
     }
 
     this.setConnectionState('connecting');
@@ -109,6 +107,7 @@ export class WSClient {
             settled = true;
             clearTimeout(timeout);
             this.reconnectAttempts = 0;
+            this.lastSentMove = null;
             this.setConnectionState('open');
             resolve();
           }
@@ -374,9 +373,7 @@ export class WSClient {
 
   private scheduleReconnect(): void {
     if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
-      console.warn('[WSClient] Max reconnect attempts reached. Switching to offline mock fallback.');
-      this.isMock = true;
-      this.initMockServer();
+      console.warn('[WSClient] Max reconnect attempts reached.');
       return;
     }
 

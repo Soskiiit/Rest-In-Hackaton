@@ -137,6 +137,7 @@ Ping каждые 20 секунд; клиент должен отвечать Po
 | TRADE_START | {npc_id,item_id}; открыть персональное предложение покупки |
 | CALCULATOR | {npc_id,item_id,trade_id,amount}; подтвердить сумму калькулятора |
 
+
 Повторный ответ квиза с использованным quiz_id → STALE_QUIZ.
 Во время AI-запроса следующий DIALOGUE → DIALOGUE_BUSY; движение и чат продолжаются.
 Устаревший turn_id → STALE_CHOICE. Чужой/несуществующий вариант отклоняется.
@@ -148,10 +149,10 @@ DIALOGUE без choice_id возвращает существующий общи
 | type | payload |
 |---|---|
 | WELCOME | {player,known_words,inventory,world:{total_chunks,total_bytes,chunk_size,max_percent}} |
-| CHUNK_LOAD | {chunk_id,buildings,lanterns,signs,npcs,items} |
+| CHUNK_LOAD | {chunk_id,buildings,lanterns,signs,npcs,items,revision} |
 | CHUNK_UNLOAD | {chunk_ids:[...]} |
 | WORLD_STATS | {loaded_chunks,total_chunks,loaded_bytes,total_bytes,data_percent,chunk_percent} |
-| PLAYER_JOIN | {id,login,profile,x,z,rotation,balance} |
+| PLAYER_JOIN | {id,login,profile,x,z,rotation}; без баланса — кошелёк виден только владельцу (WELCOME, BALANCE) |
 | PLAYER_LEAVE | {player_id} |
 | PLAYER_MOVE | {player_id,x,z,rotation} |
 | CHAT | {player_id,login,text} |
@@ -168,13 +169,25 @@ DIALOGUE без choice_id возвращает существующий общи
 | QUIZ | {quiz_id,item_id,audio_text,options:[{id,zh,py,ru}]} |
 | QUIZ_RESULT | {correct,item_id,new?} |
 | WORD_LEARNED | {word_id,zh,py,ru} |
+| WORLD_EDIT | {chunk_ids,player_id,login}; всем, кроме автора правки |
 | ERROR | {code} |
 
 Ошибки: INVALID_MOVE, INVALID_CHAT, CHAT_RATE_LIMIT, RATE_LIMIT, UNKNOWN_PACKET,
 INVALID_DIALOGUE, NPC_OUT_OF_RANGE, DIALOGUE_BUSY, STALE_CHOICE, INVALID_CHOICE,
 INVALID_INSPECT, ITEM_OUT_OF_RANGE, STALE_QUIZ, INVALID_ANSWER, DB_ERROR,
 INVALID_TRADE, INVALID_PRODUCT, DIALOGUE_REQUIRED, NPC_AGGRO, ITEM_ALREADY_OWNED,
-TRADE_EXPIRED, STALE_TRADE, INSUFFICIENT_FUNDS.
+TRADE_EXPIRED, STALE_TRADE, INSUFFICIENT_FUNDS, INVALID_WORLD_EDIT.
+
+Редактор сохраняет карту через авторизованный HTTP API `POST /world/chunks`. Вход:
+`{"chunks":{"5_6":{"data":{...},"revision":1}}}`. Все чанки проверяются и записываются
+в PostgreSQL одной транзакцией; успешный ответ содержит актуальные `chunks` с новыми версиями.
+При устаревшей версии возвращается 409 `WORLD_CONFLICT`; редактор сохраняет локальные правки.
+После записи сервер рассылает `CHUNK_UNLOAD`, затем `CHUNK_LOAD` с `revision`.
+`GET /world/chunks` возвращает снимок карты и версии. Оба метода требуют Bearer JWT.
+Файлы мира используются только для первоначального заполнения пустой таблицы world_chunks;
+после этого PostgreSQL является источником данных и мир переживает перезапуск.
+`WORLD_EDIT` в режиме базы данных не используется.
+
 При сетевой ошибке или DB_ERROR после подтверждения повторяйте CALCULATOR с тем же trade_id и параметрами:
 квитанция позволяет узнать результат без повторного списания. Для устаревшей/просроченной сделки нужен новый TRADE_START.
 Текст чата и NPC выводите через textContent, без интерпретации HTML.
@@ -186,8 +199,18 @@ TRADE_EXPIRED, STALE_TRADE, INSUFFICIENT_FUNDS.
 buildings: [{type,x,z}], lanterns: [{x,y,z}], signs: [{text,x,y,z}], npcs: [{npc_id,x,y,z}], items: [{item_id,x,y,z}]. Предметы для осмотра приходят в чанках; полный каталог и правильные ответы остаются на сервере.
 Каталог и весь мир клиенту не выдаются.
 
+Где стоят NPC и предметы, решают файлы чанков, а не координаты в catalog.json (они остаются справочными).
+Мягкие правила — сервер всегда запускается после любой правки редактора:
+- NPC/предмет перенесён в другое место или чанк — работает на новом месте;
+- удалён из всех чанков — недоступен (диалог, квиз и торг отвечают *_OUT_OF_RANGE), пока его не поставят снова;
+- поставлен дважды — используется первое размещение по порядку chunk_id, остальные — декорация;
+- npc_id/item_id нет в каталоге — декорация без взаимодействия.
+Каждый такой случай пишется в лог. Отклоняются только битый JSON, объект вне своего чанка (0 ≤ x,z < 20)
+или нечисловые координаты и превышение бюджета 10% одним чанком — при старте это ошибка запуска,
+при WORLD_EDIT — INVALID_WORLD_EDIT.
+
 AOI — текущий и ближайшие соседние чанки, максимум 9; при разном размере набор сокращается,
-чтобы сумма размеров не превышала 10% всех чанков. Чанк, который один превышает бюджет, отклоняется при старте.
+чтобы сумма размеров не превышала 10% всех чанков. Чанк, который один превышает бюджет, отклоняется.
 CHUNK_UNLOAD всегда предшествует CHUNK_LOAD. Сначала освободите старую геометрию, текстуры и ссылки, затем создавайте новую.
 
 loaded_bytes/total_bytes — размер канонического JSON содержимого чанков в UTF-8, без WS-оболочки.

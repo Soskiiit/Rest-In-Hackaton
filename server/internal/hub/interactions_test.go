@@ -44,17 +44,16 @@ func TestObservedSpeechDoesNotInvalidateOwnDialogue(t *testing.T) {
 		t.Fatal("hearing another NPC invalidated the player's active choice")
 	}
 	h.wg.Wait()
-	var foundDone bool
-	for !foundDone {
+	deadline := time.After(2 * time.Second)
+	for c.pending {
 		select {
 		case raw := <-h.events:
 			if e, ok := raw.(aiDone); ok {
-				foundDone = true
 				h.finishDialogue(e)
 			} else if p, ok := raw.(aiPartial); ok {
 				h.partialDialogue(p)
 			}
-		case <-time.After(2 * time.Second):
+		case <-deadline:
 			t.Fatal("dialogue did not complete")
 		}
 	}
