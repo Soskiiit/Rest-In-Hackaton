@@ -8,7 +8,10 @@ export type PacketType =
   | 'PLAYER_MOVE'
   | 'PLAYER_LEAVE'
   | 'DIALOGUE'
+  | 'DIALOGUE_PENDING'
+  | 'DIALOGUE_CHOICES'
   | 'NPC_SPEECH'
+  | 'NPC_SPEECH_PARTIAL'
   | 'NPC_STATE'
   | 'INSPECT'
   | 'WORD_LEARNED'
@@ -94,13 +97,25 @@ export interface Choice {
 export interface NpcSpeechPayload {
   npc_id: string;
   tokens: Token[];
-  choices: Choice[];
+  choices?: Choice[];
   emotion?: string; // "NEUTRAL" | "HAPPY" | "ANGRY" | "FURIOUS"
   mianzi: number;  // Respect meter: 0..100
   aggro: number;   // Aggro / Rage meter: 0..100
   price?: number;
   audio_base64?: string; // Base64-encoded WAV audio from AI TTS
   turn_id?: string;      // Turn token for STALE_CHOICE guard
+  is_partial?: boolean;
+}
+
+export interface DialoguePendingPayload {
+  npc_id: string;
+  player_id?: number;
+}
+
+export interface DialogueChoicesPayload {
+  npc_id: string;
+  turn_id: string;
+  choices: Choice[];
 }
 
 export interface NpcStatePayload {

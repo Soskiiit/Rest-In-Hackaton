@@ -335,6 +335,30 @@ export class PlayerController {
   }
 
   /**
+   * Resets camera position to player eye height and syncs orientation cleanly.
+   * Restores yaw/pitch without snapping or disorientation.
+   */
+  public resetCameraToPlayer(yaw?: number, pitch: number = 0): void {
+    this.camera.position.set(this.position.x, this.position.y + this.config.eyeHeight, this.position.z);
+    this.camera.rotation.order = 'YXZ';
+    if (yaw !== undefined) {
+      this.euler.set(pitch, yaw, 0, 'YXZ');
+      this.camera.quaternion.setFromEuler(this.euler);
+    } else {
+      this.euler.setFromQuaternion(this.camera.quaternion, 'YXZ');
+    }
+  }
+
+  /**
+   * Directly sets look yaw and pitch orientation.
+   */
+  public setRotation(yaw: number, pitch: number = 0): void {
+    this.euler.set(pitch, yaw, 0, 'YXZ');
+    this.camera.rotation.order = 'YXZ';
+    this.camera.quaternion.setFromEuler(this.euler);
+  }
+
+  /**
    * Returns whether player input is currently locked.
    */
   public isLocked(): boolean {

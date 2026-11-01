@@ -27,6 +27,11 @@ export class MockServer {
   private balance = 500;
   private mianzi = 40; // Respect 0..100
   private aggro = 20;  // Aggro 0..100
+  private asyncDelivery = false;
+
+  public setAsyncDelivery(enabled: boolean): void {
+    this.asyncDelivery = enabled;
+  }
 
   // 2 Simulated Remote Players for Stage R1
   private bots: SimulatedBot[] = [
@@ -164,7 +169,42 @@ export class MockServer {
       price: 500,
     };
 
-    this.emit('NPC_SPEECH', greeting);
+    this.emitSpeech(greeting);
+  }
+
+  private emitSpeech(speech: NpcSpeechPayload): void {
+    // 1. Emit partial chunk immediately (subtitles, gauges, emotion)
+    this.emit('NPC_SPEECH_PARTIAL', {
+      ...speech,
+      choices: [],
+      is_partial: true,
+    });
+
+    if (this.asyncDelivery && typeof setTimeout !== 'undefined') {
+      setTimeout(() => {
+        // 2. Emit choices chunk after natural thinking delay
+        if (speech.choices && speech.choices.length > 0) {
+          this.emit('DIALOGUE_CHOICES', {
+            npc_id: speech.npc_id,
+            turn_id: speech.turn_id || 'turn_mock',
+            choices: speech.choices,
+          });
+        }
+        // 3. Emit full speech for backward compatibility
+        this.emit('NPC_SPEECH', speech);
+      }, 800);
+    } else {
+      // 2. Emit choices chunk
+      if (speech.choices && speech.choices.length > 0) {
+        this.emit('DIALOGUE_CHOICES', {
+          npc_id: speech.npc_id,
+          turn_id: speech.turn_id || 'turn_mock',
+          choices: speech.choices,
+        });
+      }
+      // 3. Emit full speech for backward compatibility with existing tests
+      this.emit('NPC_SPEECH', speech);
+    }
   }
 
   private handleDialogue(payload: { npc_id: string; choice_id?: number }): void {
@@ -177,12 +217,14 @@ export class MockServer {
       return;
     }
 
+    this.emit('DIALOGUE_PENDING', { npc_id: payload.npc_id });
+
     if (choiceId === 1) {
       // Polite Haggling -> Mianzi +10, Aggro -10
       this.mianzi = Math.min(100, this.mianzi + 10);
       this.aggro = Math.max(0, this.aggro - 10);
 
-      this.emit('NPC_SPEECH', {
+      this.emitSpeech({
         npc_id: payload.npc_id,
         tokens: [
           { id: 'word_haha', zh: '哈哈', py: 'Hāhā', ru: 'Ха-ха' },
@@ -205,7 +247,7 @@ export class MockServer {
       this.aggro = Math.min(100, this.aggro + 20);
       this.mianzi = Math.max(0, this.mianzi - 5);
 
-      this.emit('NPC_SPEECH', {
+      this.emitSpeech({
         npc_id: payload.npc_id,
         tokens: [
           { id: 'word_three_hundred', zh: '三百', py: 'sānbǎi', ru: 'триста' },
@@ -231,7 +273,7 @@ export class MockServer {
       this.aggro = Math.min(100, this.aggro + 40);
       this.mianzi = Math.max(0, this.mianzi - 25);
 
-      this.emit('NPC_SPEECH', {
+      this.emitSpeech({
         npc_id: payload.npc_id,
         tokens: [
           { id: 'word_fake', zh: '假货', py: 'jiǎhuò', ru: 'подделка' },
@@ -251,7 +293,7 @@ export class MockServer {
       // Purchase completed! Deduct 450 ¥
       this.balance = Math.max(0, this.balance - 450);
       this.emit('BALANCE', { balance: this.balance, delta: -450 });
-      this.emit('NPC_SPEECH', {
+      this.emitSpeech({
         npc_id: payload.npc_id,
         tokens: [
           { id: 'word_deal', zh: '成交', py: 'Chéngjiāo', ru: 'По рукам' },

@@ -366,7 +366,7 @@ def _handle_lao_wang(req: DialogueRequest) -> DialogueResponse:
         )
 
     # Default / Standard Haggling
-    tokens = build_tokens(["这是", "正宗的", "玉"])
+    tokens = build_tokens(["你好", "这是", "正宗的", "玉"])
     price_new = max(price_floor, price - 50) if any(k in msg for k in ["便宜", "скидк", "дорого", "太贵"]) else price
     choices = [
         Choice(id=1, zh="老板，便宜点", py="Lǎobǎn piányi diǎn", ru="Босс, сделай скидку", type="polite"),

@@ -4,9 +4,14 @@
  */
 
 import './style.css';
+import * as THREE from 'three';
 import { World } from './engine/World';
 import { PlayerController } from './engine/PlayerController';
 import { OtherPlayerManager } from './engine/OtherPlayerManager';
+import { AppMode, EditorStateManager } from './editor/EditorState';
+import { EditorCamera } from './editor/EditorCamera';
+import { PlayerGhostBeacon } from './editor/PlayerGhostBeacon';
+import { LevelEditor } from './editor/LevelEditor';
 import { WSClient } from './net/WSClient';
 import { MockServer } from './net/MockServer';
 import { HUD } from './ui/HUD';
@@ -103,9 +108,9 @@ class Application {
   private fpsAccumulator = 0;
   private currentFps = 60;
 
-  // Player Telemetry & Vocabulary
+  // Player Telemetry & Vocabulary (Universal starter survival words: 你好, 这是)
   private playerBalance = 500;
-  private knownWords = new Set<string>();
+  private knownWords = new Set<string>(['word_hello', 'word_this']);
 
   // Obstacle Collision Caching
   private lastSyncedObstacles: any = null;
@@ -120,6 +125,22 @@ class Application {
   private speechDismissTimeout: number | null = null;
   private lastNpcSpeech: Record<string, NpcSpeechPayload> = {};
 
+  // Milestone M1 & M5: Level Editor Subsystems
+  private editorState = new EditorStateManager();
+  private editorCamera!: EditorCamera;
+  private ghostBeacon: PlayerGhostBeacon | null = null;
+  private levelEditor!: LevelEditor;
+  private savedPlayerState: {
+    position: THREE.Vector3;
+    yaw: number;
+    cameraQuaternion: THREE.Quaternion;
+    cameraPosition: THREE.Vector3;
+  } | null = null;
+  private modeToggleBtn: HTMLElement | null = null;
+  private editorStatsEl: HTMLElement | null = null;
+  private editorCoordsEl: HTMLElement | null = null;
+  private editorSpeedEl: HTMLElement | null = null;
+
   public async init(): Promise<void> {
     console.log('[Main] Initializing Rest-In-Hackaton Client...');
 
@@ -131,6 +152,11 @@ class Application {
     await this.initNetworking();
     this.bindInputAndPointerLock();
     this.bindWindowEvents();
+
+    // Milestone M5: Reconstruct saved chunk entities on startup
+    await this.levelEditor.loadAllStoredChunks().catch((err) => {
+      console.warn('[Main] Non-fatal error loading saved chunks:', err);
+    });
 
     console.log('[Main] Initialization complete. Starting render loop.');
     requestAnimationFrame((t) => this.animate(t));
@@ -151,6 +177,71 @@ class Application {
 
   private initHUD(): void {
     this.hud = new HUD();
+    this.initEditorUI();
+  }
+
+  private initEditorUI(): void {
+    // 1. Locate or create #mode-toggle-btn in HUD header
+    this.modeToggleBtn = document.getElementById('mode-toggle-btn');
+    if (!this.modeToggleBtn && typeof document !== 'undefined') {
+      const hudHeader = document.querySelector('#hud .hud-header');
+      if (hudHeader) {
+        const btn = document.createElement('button');
+        btn.id = 'mode-toggle-btn';
+        btn.className = 'cyber-mode-btn';
+        btn.type = 'button';
+        btn.title = 'Переключить режим (F2)';
+        btn.innerHTML = `<span id="mode-toggle-icon" class="mode-icon">🎮</span> <span id="mode-toggle-text">Play Mode</span> <span class="mode-hotkey">[F2]</span>`;
+        const statusEl = document.getElementById('hud-status');
+        if (statusEl && statusEl.parentNode === hudHeader) {
+          hudHeader.insertBefore(btn, statusEl);
+        } else {
+          hudHeader.appendChild(btn);
+        }
+        this.modeToggleBtn = btn;
+      }
+    }
+
+    if (this.modeToggleBtn) {
+      this.modeToggleBtn.onclick = (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.toggleAppMode();
+      };
+    }
+
+    // 2. Locate or create #hud-editor-stats in HUD body
+    this.editorStatsEl = document.getElementById('hud-editor-stats');
+    if (!this.editorStatsEl && typeof document !== 'undefined') {
+      const hudBody = document.querySelector('#hud .hud-body');
+      if (hudBody) {
+        const stats = document.createElement('div');
+        stats.id = 'hud-editor-stats';
+        stats.className = 'hidden';
+        stats.innerHTML = `
+          <div class="hud-row">
+            <span class="hud-label">РЕЖИМ:</span>
+            <span id="hud-editor-badge" class="badge-editor">РЕДАКТОР УРОВНЕЙ</span>
+          </div>
+          <div class="hud-row">
+            <span class="hud-label">КАМЕРА (X, Y, Z):</span>
+            <span id="hud-editor-coords" class="hud-val neon-cyan-val">(100.0, 15.0, 100.0)</span>
+          </div>
+          <div class="hud-row">
+            <span class="hud-label">СКОРОСТЬ:</span>
+            <span id="hud-editor-speed" class="hud-val neon-amber-val">15.0 m/s</span>
+          </div>
+          <div class="hud-row hud-editor-hints">
+            <span class="editor-hint-text">WASD: полет | Q/E: высота | ПКМ: обзор | Колесо: скорость</span>
+          </div>
+        `;
+        hudBody.appendChild(stats);
+        this.editorStatsEl = stats;
+      }
+    }
+
+    this.editorCoordsEl = document.getElementById('hud-editor-coords');
+    this.editorSpeedEl = document.getElementById('hud-editor-speed');
   }
 
   private initDialogueUI(): void {
@@ -189,6 +280,34 @@ class Application {
 
     // 3. Initialize Remote Players Avatar Manager
     this.otherPlayerManager = new OtherPlayerManager(this.world.getScene());
+
+    // 4. Initialize DCC Free Fly Editor Camera & Ghost Beacon (Milestone M1)
+    this.editorCamera = new EditorCamera(this.world.getCamera(), container, {
+      baseMoveSpeed: 15.0,
+      shiftMultiplier: 2.5,
+      altMultiplier: 0.3,
+      wheelStep: 1.15,
+    });
+    this.ghostBeacon = new PlayerGhostBeacon(this.world.getScene());
+
+    // 5. Wire Editor Mode Transition Listener
+    this.editorState.addListener((targetMode: AppMode, prevMode?: AppMode) => {
+      this.handleModeChanged(targetMode, prevMode);
+    });
+
+    // 6. Master Level Editor (Milestone M5)
+    this.levelEditor = new LevelEditor({
+      scene: this.world.getScene(),
+      camera: this.world.getCamera(),
+      domElement: container,
+      world: this.world,
+      stateManager: this.editorState,
+      editorCamera: this.editorCamera,
+      ghostBeacon: this.ghostBeacon,
+      playerController: this.playerController,
+      hud: this.hud,
+      autoInitUI: true,
+    });
   }
 
   private wireNetworkHandlers(client: WSClient): void {
@@ -206,6 +325,21 @@ class Application {
     // 3. NPC Speech: Trigger Dialogue Overlay (Stage 3)
     client.on('NPC_SPEECH', (payload: NpcSpeechPayload) => {
       this.handleNpcSpeech(payload);
+    });
+
+    // 3a. Dialogue Pending: NPC is thinking / generating response
+    client.on('DIALOGUE_PENDING', (payload: any) => {
+      this.handleDialoguePending(payload);
+    });
+
+    // 3b. NPC Speech Partial: First chunk containing NPC reply and audio
+    client.on('NPC_SPEECH_PARTIAL', (payload: NpcSpeechPayload) => {
+      this.handleNpcSpeechPartial(payload);
+    });
+
+    // 3c. Dialogue Choices: Second chunk containing interactive choices
+    client.on('DIALOGUE_CHOICES', (payload: any) => {
+      this.handleDialogueChoices(payload);
     });
 
     // 4. NPC State: Update Mianzi / Aggro Gauges (Stage 3)
@@ -339,7 +473,7 @@ class Application {
   ): void {
     this.playerBalance = player.balance;
     this.hud.updateBalance(player.balance);
-    this.knownWords = new Set(knownWords);
+    this.knownWords = new Set([...(knownWords || []), 'word_hello', 'word_this']);
     if (moveToServerPosition) {
       const current = this.playerController.getPosition();
       this.playerController.setPosition(player.x, current.y, player.z);
@@ -388,6 +522,9 @@ class Application {
     this.wsClient = new WSClient({ mock: true });
     this.wsClient.connect();
     this.mockServer = this.wsClient.getMockServer();
+    if (this.mockServer) {
+      this.mockServer.setAsyncDelivery(true);
+    }
     this.wireNetworkHandlers(this.wsClient);
     this.hud.setWsStatus('mock');
   }
@@ -395,6 +532,9 @@ class Application {
   private bindInputAndPointerLock(): void {
     // Clicking instructions blocker engages PointerLock
     this.blockerEl.addEventListener('click', (event: MouseEvent) => {
+      if (this.editorState.isEditor()) {
+        return;
+      }
       if (event?.target && (event.target as HTMLElement).closest('button, input, a, select')) {
         return;
       }
@@ -411,6 +551,9 @@ class Application {
     });
 
     this.playerController.onUnlock(() => {
+      if (this.editorState.isEditor()) {
+        return;
+      }
       if (!this.isModalActive && !this.isDialogueActive && !this.authScreen?.isVisible() && !this.dialogueUI?.isOpen() && !this.quizPanel?.isOpen()) {
         this.blockerEl.classList.remove('hidden');
       }
@@ -427,6 +570,9 @@ class Application {
       this.mockServer?.stop();
       this.world?.dispose();
     });
+
+    // Note: F2 mode toggling is handled strictly by LevelEditor to prevent double-event conflicts
+
 
     // Key 'F' interaction trigger (Lao Wang NPC Dialogue)
     window.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -456,10 +602,138 @@ class Application {
   }
 
   /**
+   * Toggles between GAME and EDITOR modes.
+   */
+  public toggleAppMode(): void {
+    if (this.authScreen?.isVisible()) return;
+    if (this.levelEditor) {
+      this.levelEditor.toggleMode();
+    } else {
+      this.editorState.toggleMode();
+    }
+  }
+
+  private handleModeChanged(targetMode: AppMode, prevMode?: AppMode): void {
+    console.log(`[Main] Application mode transition: ${prevMode ?? 'none'} -> ${targetMode}`);
+    if (targetMode === AppMode.EDITOR) {
+      this.enterEditorMode();
+    } else {
+      this.exitEditorMode();
+    }
+  }
+
+  private enterEditorMode(): void {
+    // 1. Close any open gameplay modals
+    if (this.dialogueUI?.isOpen()) {
+      this.dialogueUI.close();
+      this.handleDialogueClose();
+    }
+    if (this.quizPanel?.isOpen()) {
+      this.quizPanel.close();
+      this.handleQuizClose();
+    }
+    this.hideInteractionPrompt();
+
+    // 2. Save player position & orientation
+    const pPos = this.playerController.getPosition();
+    const pYaw = this.playerController.getYaw();
+    const cam = this.world.getCamera();
+    this.savedPlayerState = {
+      position: new THREE.Vector3(pPos.x, pPos.y, pPos.z),
+      yaw: pYaw,
+      cameraQuaternion: cam.quaternion.clone(),
+      cameraPosition: cam.position.clone(),
+    };
+
+    // 3. Suspend player input & release pointer lock
+    this.playerController.setLocked(true);
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+
+    // 4. UI Adjustments
+    this.blockerEl.classList.add('hidden');
+    document.getElementById('crosshair')?.classList.add('hidden');
+    this.updateModeToggleUI(AppMode.EDITOR);
+
+    // 5. Spawn Ghost Beacon at saved player position
+    if (this.ghostBeacon) {
+      this.ghostBeacon.spawn(pPos, pYaw);
+    }
+
+    // 6. Activate Free DCC Camera (EditorCamera)
+    if (this.editorCamera) {
+      this.editorCamera.setPosition(cam.position);
+      this.editorCamera.syncFromCamera();
+      this.editorCamera.enable();
+    }
+
+    // 7. Feedback toast (if not handled by LevelEditor)
+    if (!this.levelEditor) {
+      this.hud.showToast('Режим редактора: Свободная камера (WASD + QE + ПКМ)');
+    }
+  }
+
+  private exitEditorMode(): void {
+    // 1. Disable Free DCC Camera
+    if (this.editorCamera) {
+      this.editorCamera.disable();
+    }
+
+    // 2. Remove Ghost Beacon from scene
+    if (this.ghostBeacon) {
+      this.ghostBeacon.remove();
+    }
+
+    // 3. Restore player camera position & orientation
+    if (this.savedPlayerState) {
+      this.playerController.resetCameraToPlayer(this.savedPlayerState.yaw);
+      this.world.getCamera().quaternion.copy(this.savedPlayerState.cameraQuaternion);
+    }
+
+    // 4. Re-enable player controller
+    this.playerController.setLocked(false);
+
+    // 5. UI Adjustments
+    document.getElementById('crosshair')?.classList.remove('hidden');
+    this.updateModeToggleUI(AppMode.GAME);
+
+    // 6. Feedback toast (if not handled by LevelEditor)
+    if (!this.levelEditor) {
+      this.hud.showToast('Игровой режим возобновлен [F2 для Редактора]');
+    }
+  }
+
+  private updateModeToggleUI(mode: AppMode): void {
+    const isEditor = mode === AppMode.EDITOR;
+    if (this.modeToggleBtn) {
+      this.modeToggleBtn.classList.toggle('mode-editor-active', isEditor);
+      this.modeToggleBtn.classList.toggle('mode-active-editor', isEditor);
+    }
+    const icon = document.getElementById('mode-toggle-icon');
+    if (icon) {
+      icon.textContent = isEditor ? '🛠️' : '🎮';
+    }
+    const text = document.getElementById('mode-toggle-text');
+    if (text) {
+      text.textContent = isEditor ? 'Level Editor' : 'Play Mode';
+    }
+    if (this.editorStatsEl) {
+      this.editorStatsEl.classList.toggle('hidden', !isEditor);
+    }
+    const coordsRow = document.getElementById('hud-coords')?.closest('.hud-row');
+    const balanceRow = document.getElementById('hud-balance')?.closest('.hud-row');
+    if (coordsRow) coordsRow.classList.toggle('hidden', isEditor);
+    if (balanceRow) balanceRow.classList.toggle('hidden', isEditor);
+  }
+
+  /**
    * Modal Lock API used by DialogueUI (Stage 3) and QuizPanel (Stage 4).
    * Unlocks pointer and suspends WASD movement while modal is open.
    */
   public setModalActive(active: boolean): void {
+    if (this.editorState.isEditor()) return;
+
     this.isModalActive = active;
     this.playerController.setModalActive(active);
 
@@ -488,7 +762,111 @@ class Application {
       return;
     }
 
+    // If dialogue UI is already open and displaying progressive partial speech,
+    // do not restart TTS audio or rebuild dialogue from scratch, which would break streaming.
+    if (this.dialogueUI && this.dialogueUI.isOpen()) {
+      if (this.knownWords && typeof (this.dialogueUI as any).refreshSubtitles === 'function') {
+        (this.dialogueUI as any).refreshSubtitles(this.knownWords);
+      }
+      if (Array.isArray(payload.choices) && payload.choices.length > 0) {
+        if (typeof (this.dialogueUI as any).setChoices === 'function') {
+          (this.dialogueUI as any).setChoices(payload.choices, payload.turn_id);
+        }
+      }
+      return;
+    }
+
     this.openInteractiveDialogue(payload);
+  }
+
+  /**
+   * Inbound DIALOGUE_PENDING packet handler. Notifies UI that NPC is formulating a response.
+   */
+  private handleDialoguePending(payload: any): void {
+    console.log(`[Main] DIALOGUE_PENDING received for npc '${payload?.npc_id}'`);
+    if (this.isDialogueActive && this.dialogueUI && this.dialogueUI.isOpen()) {
+      if (typeof (this.dialogueUI as any).setPending === 'function') {
+        (this.dialogueUI as any).setPending(true, 'Собеседник думает...');
+      }
+    }
+  }
+
+  /**
+   * Inbound NPC_SPEECH_PARTIAL packet handler:
+   * First chunk containing NPC reply, subtitles, meters, and audio.
+   * Renders immediately on client while choices are still being generated!
+   */
+  private handleNpcSpeechPartial(payload: NpcSpeechPayload): void {
+    console.log(`[Main] NPC_SPEECH_PARTIAL received from '${payload.npc_id}' (${payload.tokens?.length ?? 0} tokens)`);
+    this.lastNpcSpeech[payload.npc_id] = payload;
+    this.activeNpcId = payload.npc_id;
+
+    if (!this.isDialogueActive) {
+      return;
+    }
+
+    this.playTTSAudio(payload);
+    this.setModalActive(true);
+    this.hideInteractionPrompt();
+
+    if (this.dialogueUI) {
+      if (typeof (this.dialogueUI as any).renderPartialSpeech === 'function') {
+        (this.dialogueUI as any).renderPartialSpeech(
+          payload,
+          this.knownWords,
+          (choiceId: number) => this.handleDialogueChoice(choiceId),
+          () => this.handleDialogueClose()
+        );
+      } else {
+        this.dialogueUI.open(
+          payload,
+          (choiceId: number) => this.handleDialogueChoice(choiceId),
+          () => this.handleDialogueClose(),
+          this.knownWords
+        );
+      }
+    }
+  }
+
+  /**
+   * Inbound DIALOGUE_CHOICES packet handler:
+   * Second chunk containing interactive choices for the player.
+   * Renders choice buttons and restores keyboard selection.
+   */
+  private handleDialogueChoices(payload: any): void {
+    console.log(`[Main] DIALOGUE_CHOICES received for turn '${payload?.turn_id}' with ${payload?.choices?.length ?? 0} options`);
+    if (payload?.turn_id) {
+      this.activeTurnId = payload.turn_id;
+    }
+
+    if (!this.isDialogueActive) {
+      return;
+    }
+
+    this.setModalActive(true);
+
+    if (this.dialogueUI && Array.isArray(payload?.choices)) {
+      if (typeof (this.dialogueUI as any).setChoices === 'function') {
+        (this.dialogueUI as any).setChoices(payload.choices, payload.turn_id);
+      }
+    }
+  }
+
+  private playTTSAudio(payload: NpcSpeechPayload): void {
+    if (!payload.audio_base64) return;
+    try {
+      const binary = atob(payload.audio_base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.play().catch((err) => console.warn('[Main] TTS audio play failed:', err));
+      console.log(`[Main] Playing TTS audio (${bytes.length} bytes) for NPC '${payload.npc_id}'`);
+    } catch (err) {
+      console.warn('[Main] Failed to decode/play TTS audio:', err);
+    }
   }
 
   private openInteractiveDialogue(payload: NpcSpeechPayload): void {
@@ -496,7 +874,7 @@ class Application {
     const isInteractive = hasChoices && Boolean(payload.turn_id);
 
     // 1. Only activate UI modal lock (frees mouse pointer, suspends WASD) if there are interactive choices!
-    if (isInteractive) {
+    if (isInteractive || payload.is_partial) {
       this.setModalActive(true);
     } else {
       this.setModalActive(false);
@@ -506,21 +884,7 @@ class Application {
     this.hideInteractionPrompt();
 
     // 3. Play TTS audio from AI service (Base64 WAV)
-    if (payload.audio_base64) {
-      try {
-        const binary = atob(payload.audio_base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const blob = new Blob([bytes], { type: 'audio/wav' });
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.onended = () => URL.revokeObjectURL(url);
-        audio.play().catch((err) => console.warn('[Main] TTS audio play failed:', err));
-        console.log(`[Main] Playing TTS audio (${bytes.length} bytes) for NPC '${payload.npc_id}'`);
-      } catch (err) {
-        console.warn('[Main] Failed to decode/play TTS audio:', err);
-      }
-    }
+    this.playTTSAudio(payload);
 
     // 4. Open DialogueUI
     this.dialogueUI.open(
@@ -662,6 +1026,7 @@ class Application {
 
   public handleInteractKey(event?: KeyboardEvent): void {
     if (
+      this.editorState.isEditor() ||
       this.isModalActive ||
       (this.dialogueUI && this.dialogueUI.isOpen()) ||
       (this.quizPanel && this.quizPanel.isOpen())
@@ -685,6 +1050,7 @@ class Application {
 
   public handleTeapotKey(event?: KeyboardEvent): void {
     if (
+      this.editorState.isEditor() ||
       this.isModalActive ||
       (this.dialogueUI && this.dialogueUI.isOpen()) ||
       (this.quizPanel && this.quizPanel.isOpen())
@@ -715,6 +1081,7 @@ class Application {
 
     // 1. MockServer instance
     if (this.mockServer) {
+      this.mockServer.setAsyncDelivery(true);
       this.mockServer.triggerLaoWangGreeting();
       return;
     }
@@ -722,6 +1089,7 @@ class Application {
     // 2. WSClient Mock mode
     const clientMock = this.wsClient?.getMockServer?.();
     if (clientMock) {
+      clientMock.setAsyncDelivery(true);
       clientMock.triggerLaoWangGreeting();
       return;
     }
@@ -864,42 +1232,93 @@ class Application {
     }
 
     // 2. Update Controllers & Simulations
-    // Sync obstacle collision bounding boxes from active world chunks (cached, only recomputed when chunks load/unload)
-    const walls = this.world.getWallBoundingBoxes?.() ?? [];
-    if (walls !== this.lastSyncedObstacles) {
-      this.lastSyncedObstacles = walls;
-      this.playerController.setObstacles(walls);
+    const isEditor = this.editorState.isEditor();
+    let viewX: number;
+    let viewY: number;
+    let viewZ: number;
+
+    if (isEditor) {
+      // --- EDITOR MODE ---
+      if (this.levelEditor) {
+        this.levelEditor.update(delta);
+      } else {
+        this.editorCamera.update(delta);
+        if (this.ghostBeacon) {
+          this.ghostBeacon.update(delta);
+        }
+      }
+      const camPos = this.editorCamera.getPosition();
+      viewX = camPos.x;
+      viewY = camPos.y;
+      viewZ = camPos.z;
+
+      this.hideInteractionPrompt();
+    } else {
+      // --- GAME MODE ---
+      // Sync obstacle collision bounding boxes from active world chunks (cached, only recomputed when chunks load/unload)
+      const walls = this.world.getWallBoundingBoxes?.() ?? [];
+      if (walls !== this.lastSyncedObstacles) {
+        this.lastSyncedObstacles = walls;
+        this.playerController.setObstacles(walls);
+      }
+
+      this.playerController.update(delta);
+      const pos = this.playerController.getPosition();
+      viewX = pos.x;
+      viewY = pos.y;
+      viewZ = pos.z;
+
+      // 3. Evaluate NPC Proximity & Interaction Prompt
+      this.checkNpcProximity(pos);
+
+      // 5. Transmit Player Position at ~20 Hz
+      this.transmitPositionIfNeeded(delta);
     }
 
-    this.playerController.update(delta);
-    const pos = this.playerController.getPosition();
     this.otherPlayerManager.update(delta);
-    this.world.update(delta, pos.x, pos.z);
 
-    // 3. Evaluate NPC Proximity & Interaction Prompt
-    this.checkNpcProximity(pos);
+    // Dynamic Chunk Streaming (Feature F5) around active viewpoint (camera in editor, player in game)
+    this.world.update(delta, viewX, viewZ);
 
     // 4. Render 3D Scene
     this.world.render();
-
-    // 5. Transmit Player Position at ~20 Hz
-    this.transmitPositionIfNeeded(delta);
 
     // 6. Update Real-Time HUD Overlay Every Frame
     const cachePercent = this.world.getCachePercentage?.() ?? 9;
     const chunkCount = this.world.getLoadedChunksCount?.() ?? this.world.getLoadedChunkCount?.() ?? 9;
 
-    this.hud.update(
-      this.currentFps,
-      cachePercent,
-      chunkCount,
-      pos.x,
-      pos.z,
-      this.playerBalance
-    );
+    if (isEditor) {
+      if (this.editorCoordsEl) {
+        this.editorCoordsEl.textContent = `(${viewX.toFixed(1)}, ${viewY.toFixed(1)}, ${viewZ.toFixed(1)})`;
+      }
+      if (this.editorSpeedEl) {
+        this.editorSpeedEl.textContent = `${this.editorCamera.getSpeed().toFixed(1)} m/s`;
+      }
+      this.hud.update(
+        this.currentFps,
+        cachePercent,
+        chunkCount,
+        viewX,
+        viewZ,
+        this.playerBalance
+      );
+    } else {
+      this.hud.update(
+        this.currentFps,
+        cachePercent,
+        chunkCount,
+        viewX,
+        viewZ,
+        this.playerBalance
+      );
+    }
   }
 
   private transmitPositionIfNeeded(delta: number): void {
+    if (this.editorState.isEditor()) {
+      return;
+    }
+
     if (!this.wsClient || !this.wsClient.isConnected) {
       return;
     }
@@ -927,6 +1346,26 @@ class Application {
       this.lastSentZ = pos.z;
       this.lastSentRotation = rot;
     }
+  }
+
+  public getEditorState(): EditorStateManager {
+    return this.editorState;
+  }
+
+  public getLevelEditor(): LevelEditor {
+    return this.levelEditor;
+  }
+
+  public getEditorCamera(): EditorCamera {
+    return this.editorCamera;
+  }
+
+  public getGhostBeacon(): PlayerGhostBeacon | null {
+    return this.ghostBeacon;
+  }
+
+  public getWorld(): World {
+    return this.world;
   }
 
   // Public Inspection Accessors
