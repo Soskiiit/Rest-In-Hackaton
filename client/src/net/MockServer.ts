@@ -138,7 +138,17 @@ export class MockServer {
         break;
 
       case 'PING':
-        this.emit('PONG', {});
+        this.emit('PONG', { fps: 60 });
+        break;
+
+      case 'GET_METRICS':
+        this.emit('METRICS_UPDATE', {
+          users: [
+            { player_id: 1, login: 'Admin (You)', fps: 60, ping: 5 },
+            { player_id: 2, login: 'Tourist_Alex', fps: 58, ping: 24 },
+            { player_id: 3, login: 'Trader_Lin', fps: 61, ping: 18 },
+          ],
+        });
         break;
 
       default:

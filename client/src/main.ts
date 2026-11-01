@@ -22,6 +22,7 @@ import { QuizPanel } from './ui/QuizPanel';
 import { TTS } from './audio/TTS';
 import { Profiler } from './engine/Profiler';
 import { AuthScreen } from './ui/AuthScreen';
+import { AdminMetricsModal } from './ui/AdminMetricsModal';
 import {
   AuthClient,
   AuthSession,
@@ -157,6 +158,7 @@ class Application {
   private editorStatsEl: HTMLElement | null = null;
   private editorCoordsEl: HTMLElement | null = null;
   private editorSpeedEl: HTMLElement | null = null;
+  private adminMetricsModal!: AdminMetricsModal;
 
   public async init(): Promise<void> {
     console.log('[Main] Initializing Rest-In-Hackaton Client...');
@@ -195,6 +197,10 @@ class Application {
 
   private initHUD(): void {
     this.hud = new HUD();
+    this.adminMetricsModal = new AdminMetricsModal(
+      () => this.currentFps,
+      (isOpen: boolean) => this.setModalActive(isOpen)
+    );
     this.initEditorUI();
   }
 
@@ -251,6 +257,38 @@ class Application {
           hudHeader.appendChild(pBtn);
         }
       }
+    }
+
+    // 1c. Wire #admin-metrics-btn in HUD header
+    let adminMetricsBtn = document.getElementById('admin-metrics-btn');
+    if (!adminMetricsBtn && typeof document !== 'undefined') {
+      const hudHeader = document.querySelector('#hud .hud-header');
+      if (hudHeader) {
+        const mBtn = document.createElement('button');
+        mBtn.id = 'admin-metrics-btn';
+        mBtn.className = 'cyber-mode-btn';
+        mBtn.type = 'button';
+        mBtn.title = 'Активировать мониторинг метрик всех пользователей [TAB]';
+        mBtn.innerHTML = `<span class="mode-icon">📊</span> <span>Метрики [TAB]</span>`;
+        const statusEl = document.getElementById('hud-status');
+        if (statusEl && statusEl.parentNode === hudHeader) {
+          hudHeader.insertBefore(mBtn, statusEl);
+        } else {
+          hudHeader.appendChild(mBtn);
+        }
+        adminMetricsBtn = mBtn;
+      }
+    }
+
+    if (adminMetricsBtn) {
+      adminMetricsBtn.onclick = (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.adminMetricsModal.enableTabFeature();
+        this.adminMetricsModal.toggle();
+        this.hud.showToast('Мониторинг пользователей активирован! Открытие по [TAB]');
+        adminMetricsBtn?.classList.toggle('mode-editor-active', this.adminMetricsModal.isOpen());
+      };
     }
 
     // 2. Locate or create #hud-editor-stats in HUD body
@@ -454,6 +492,15 @@ class Application {
         );
       }
     });
+
+    // 9. PING/PONG latency and FPS telemetry
+    client.on('PING', () => {
+      client.send('PONG', {
+        fps: this.currentFps,
+      });
+    });
+
+    this.adminMetricsModal.setWSClient(client);
 
     client.on('ERROR', (payload) => {
       console.warn('[Main] Server error:', payload?.code ?? payload);
