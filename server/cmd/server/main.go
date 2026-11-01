@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hackaton/server/internal/db"
+	"hackaton/server/internal/envload"
 	"hackaton/server/internal/game"
 	"hackaton/server/internal/handler"
 	"hackaton/server/internal/hub"
@@ -70,6 +71,11 @@ func run() error {
 	return srv.Shutdown(ctx)
 }
 func main() {
+	if path, err := envload.Load(); err != nil {
+		log.Printf("load .env: %v", err)
+	} else if path != "" {
+		log.Printf("loaded settings from %s", path)
+	}
 	if err := run(); err != nil {
 		log.Fatal(err)
 	}
