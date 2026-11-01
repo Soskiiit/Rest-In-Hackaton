@@ -126,6 +126,12 @@ export class World {
     // 6.3 Animated / Populated NPCs behind market stalls and in plazas
     this.initMarketNpcs();
 
+    // 6.4 Chickens wandering in random locations around streets and plazas
+    this.initChickens();
+
+    // 6.5 Lush vegetation: Trees and flowering bushes placed organically around the market
+    this.initVegetation();
+
     // 7. Dynamic Chunk Streamer (10x10 grid, AoI <= 9 chunks)
     this.initChunkStreamer();
 
@@ -459,6 +465,269 @@ export class World {
     }).catch((err) => {
       console.warn('[World] Failed to load vendor GLTF models:', err);
     });
+  }
+
+  /**
+   * Spawns 3D chickens scattered randomly in corridors and plazas.
+   */
+  private initChickens(): void {
+    const loader = new GLTFLoader();
+    const modelUrls = ['/assets/models/chicken.glb', '/models/chicken.glb'];
+
+    const loadChicken = async () => {
+      try {
+        return await loader.loadAsync(modelUrls[0]);
+      } catch {
+        return await loader.loadAsync(modelUrls[1]);
+      }
+    };
+
+    loadChicken().then((gltf) => {
+      console.log('[World] Successfully loaded Chicken 3D model! Scattering chickens...');
+
+      // Candidate spots across the market corridors and open squares
+      const chickenSpawnSpots: Array<{ x: number; z: number }> = [
+        // South entrance street (walkway ~98..102, z ~65..95)
+        { x: 99.2, z: 68.5 },
+        { x: 101.3, z: 76.0 },
+        { x: 98.7, z: 84.5 },
+        { x: 100.8, z: 92.0 },
+
+        // Central crossroads
+        { x: 98.5, z: 98.5 },
+        { x: 101.8, z: 102.2 },
+
+        // West corridor
+        { x: 89.0, z: 99.2 },
+        { x: 81.5, z: 101.1 },
+        { x: 74.0, z: 98.8 },
+
+        // West plaza
+        { x: 63.5, z: 95.0 },
+        { x: 58.0, z: 104.5 },
+        { x: 66.0, z: 108.0 },
+        { x: 53.5, z: 99.0 },
+
+        // East corridor
+        { x: 111.0, z: 101.4 },
+        { x: 118.5, z: 98.7 },
+        { x: 124.0, z: 100.5 },
+
+        // East plaza
+        { x: 136.0, z: 96.0 },
+        { x: 144.5, z: 105.0 },
+        { x: 139.0, z: 108.5 },
+        { x: 147.0, z: 98.5 },
+
+        // North plaza & bazaar
+        { x: 95.5, z: 112.0 },
+        { x: 104.2, z: 115.5 },
+        { x: 91.0, z: 122.0 },
+        { x: 109.5, z: 121.5 },
+        { x: 98.0, z: 130.5 },
+        { x: 103.0, z: 134.0 },
+        { x: 86.5, z: 128.0 },
+        { x: 114.0, z: 131.0 },
+        { x: 96.0, z: 140.0 },
+        { x: 104.5, z: 141.5 },
+      ];
+
+      // Original chicken model height is ~189 units.
+      // Scaling by ~0.003 brings chicken height to ~0.55m, which looks great and lifelike in the market!
+      const chickenScale = 0.0032;
+
+      for (let i = 0; i < chickenSpawnSpots.length; i++) {
+        const spot = chickenSpawnSpots[i];
+        // Jitter position slightly for a natural random spread
+        const randJitterX = (Math.sin(i * 19.3) * 0.8);
+        const randJitterZ = (Math.cos(i * 27.7) * 0.8);
+        const randomRotY = (i * 1.6180339887) % (Math.PI * 2);
+
+        const chicken = gltf.scene.clone(true);
+        chicken.position.set(spot.x + randJitterX, 0.0, spot.z + randJitterZ);
+        chicken.rotation.set(0, randomRotY, 0);
+        chicken.scale.set(chickenScale, chickenScale, chickenScale);
+
+        chicken.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+
+        this.scene.add(chicken);
+      }
+    }).catch((err) => {
+      console.warn('[World] Failed to load chicken GLTF model:', err);
+    });
+  }
+
+  /**
+   * Spawns trees and flowering bushes organically around plazas, courtyards, and street edges.
+   */
+  private initVegetation(): void {
+    const loader = new GLTFLoader();
+
+    const loadBush = async () => {
+      try {
+        return await loader.loadAsync('/assets/models/bush.glb');
+      } catch {
+        return await loader.loadAsync('/models/bush.glb');
+      }
+    };
+
+    const loadTree = async () => {
+      try {
+        return await loader.loadAsync('/assets/models/tree.glb');
+      } catch {
+        return await loader.loadAsync('/models/tree.glb');
+      }
+    };
+
+    Promise.all([loadBush(), loadTree()])
+      .then(([bushGltf, treeGltf]) => {
+        console.log('[World] Successfully loaded Bush and Tree 3D models! Placing vegetation...');
+
+        // 1. Organic Tree Locations (Corners of plazas, street entrances, courtyards)
+        // Tree original height: ~509 units. Scale ~0.012 -> height ~6.1m (fits comfortably under walls/eaves)
+        const treeSpots: Array<{ x: number; z: number; scaleMod?: number }> = [
+          // South entrance avenue (flanking entrance gates and corner nooks)
+          { x: 92.0, z: 62.0, scaleMod: 0.95 },
+          { x: 108.0, z: 62.0, scaleMod: 1.05 },
+          { x: 92.0, z: 80.0, scaleMod: 0.9 },
+          { x: 108.0, z: 80.0, scaleMod: 1.0 },
+
+          // West Plaza courtyards and open corners
+          { x: 54.0, z: 94.0, scaleMod: 1.1 },
+          { x: 54.0, z: 106.0, scaleMod: 1.0 },
+          { x: 67.0, z: 95.0, scaleMod: 0.95 },
+          { x: 67.0, z: 105.0, scaleMod: 1.05 },
+
+          // East Plaza courtyards and open corners
+          { x: 135.0, z: 94.0, scaleMod: 1.05 },
+          { x: 135.0, z: 106.0, scaleMod: 0.95 },
+          { x: 147.0, z: 94.0, scaleMod: 1.1 },
+          { x: 147.0, z: 106.0, scaleMod: 1.0 },
+
+          // North Plaza (perimeter and open spaces)
+          { x: 88.0, z: 110.0, scaleMod: 1.0 },
+          { x: 112.0, z: 110.0, scaleMod: 1.05 },
+          { x: 85.0, z: 122.0, scaleMod: 0.95 },
+          { x: 115.0, z: 122.0, scaleMod: 1.0 },
+          { x: 86.0, z: 138.0, scaleMod: 1.1 },
+          { x: 114.0, z: 138.0, scaleMod: 1.0 },
+          // Flanking north plaza background wall
+          { x: 92.0, z: 144.0, scaleMod: 0.9 },
+          { x: 108.0, z: 144.0, scaleMod: 0.95 },
+        ];
+
+        for (let i = 0; i < treeSpots.length; i++) {
+          const spot = treeSpots[i];
+          const baseScale = 0.012 * (spot.scaleMod ?? 1.0);
+          const rotY = (i * 2.39996) % (Math.PI * 2);
+
+          const tree = treeGltf.scene.clone(true);
+          tree.position.set(spot.x, 0, spot.z);
+          tree.rotation.set(0, rotY, 0);
+          tree.scale.set(baseScale, baseScale, baseScale);
+
+          tree.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+
+          this.scene.add(tree);
+        }
+
+        // 2. Flowering Bush Locations (Cluster naturally around trees, along walls, and near stall edges)
+        // Bush original height: ~1.58m. Scale ~0.8 to ~1.1 -> height ~1.2m - 1.7m (lush garden shrub)
+        const bushSpots: Array<{ x: number; z: number; scale?: number }> = [
+          // Near South Avenue trees
+          { x: 92.5, z: 63.5, scale: 0.85 },
+          { x: 91.2, z: 61.2, scale: 1.0 },
+          { x: 107.5, z: 63.2, scale: 0.9 },
+          { x: 108.8, z: 61.0, scale: 1.05 },
+          { x: 92.2, z: 78.5, scale: 0.8 },
+          { x: 107.8, z: 81.5, scale: 0.95 },
+
+          // Along South Avenue building corners
+          { x: 94.0, z: 89.0, scale: 0.85 },
+          { x: 106.0, z: 89.0, scale: 0.85 },
+
+          // Crossroads nook greenery
+          { x: 92.5, z: 92.5, scale: 0.9 },
+          { x: 107.5, z: 92.5, scale: 0.9 },
+
+          // West Corridor edges
+          { x: 80.0, z: 92.0, scale: 0.85 },
+          { x: 86.0, z: 92.0, scale: 0.95 },
+
+          // West Plaza lush perimeter clusters
+          { x: 53.0, z: 92.5, scale: 1.0 },
+          { x: 55.5, z: 95.0, scale: 0.8 },
+          { x: 53.0, z: 107.5, scale: 0.95 },
+          { x: 55.0, z: 105.0, scale: 0.85 },
+          { x: 68.0, z: 93.5, scale: 0.9 },
+          { x: 68.5, z: 106.5, scale: 0.85 },
+          { x: 61.0, z: 88.0, scale: 1.0 },
+          { x: 61.0, z: 111.5, scale: 1.0 },
+
+          // East Corridor edges
+          { x: 114.0, z: 92.0, scale: 0.85 },
+          { x: 120.0, z: 92.0, scale: 0.95 },
+
+          // East Plaza lush perimeter clusters
+          { x: 133.5, z: 92.5, scale: 0.95 },
+          { x: 136.5, z: 95.0, scale: 0.85 },
+          { x: 133.5, z: 107.5, scale: 0.9 },
+          { x: 136.0, z: 105.0, scale: 0.8 },
+          { x: 148.5, z: 92.5, scale: 1.0 },
+          { x: 148.5, z: 107.5, scale: 0.95 },
+          { x: 140.0, z: 88.0, scale: 1.05 },
+          { x: 140.0, z: 111.5, scale: 1.0 },
+
+          // North Plaza perimeter and garden clusters
+          { x: 86.5, z: 109.0, scale: 0.9 },
+          { x: 89.5, z: 111.5, scale: 0.8 },
+          { x: 110.5, z: 111.5, scale: 0.85 },
+          { x: 113.5, z: 109.0, scale: 0.95 },
+          { x: 84.0, z: 120.5, scale: 0.9 },
+          { x: 86.0, z: 123.5, scale: 0.8 },
+          { x: 114.0, z: 120.5, scale: 0.85 },
+          { x: 116.0, z: 123.5, scale: 0.95 },
+          { x: 85.0, z: 136.5, scale: 1.0 },
+          { x: 87.5, z: 139.5, scale: 0.85 },
+          { x: 112.5, z: 139.5, scale: 0.9 },
+          { x: 115.0, z: 136.5, scale: 1.0 },
+          { x: 93.5, z: 143.0, scale: 0.85 },
+          { x: 106.5, z: 143.0, scale: 0.85 },
+        ];
+
+        for (let i = 0; i < bushSpots.length; i++) {
+          const spot = bushSpots[i];
+          const scale = spot.scale ?? 0.9;
+          const rotY = (i * 1.832) % (Math.PI * 2);
+
+          const bush = bushGltf.scene.clone(true);
+          bush.position.set(spot.x, 0, spot.z);
+          bush.rotation.set(0, rotY, 0);
+          bush.scale.set(scale, scale, scale);
+
+          bush.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+
+          this.scene.add(bush);
+        }
+      })
+      .catch((err) => {
+        console.warn('[World] Failed to load vegetation models:', err);
+      });
   }
 
   /**
