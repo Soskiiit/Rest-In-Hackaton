@@ -25,6 +25,8 @@ export type PacketType =
   | 'WELCOME'
   | 'PLAYER_JOIN'
   | 'WORLD_EDIT'
+  | 'ADMIN_NPC_RELATIONS'
+  | 'ADMIN_SET_RELATION'
   | 'CONNECTION_CLOSED';
 
 export interface Packet<T = any> {
@@ -165,6 +167,7 @@ export interface WelcomePayload {
     z: number;
     rotation: number;
     balance: number;
+    is_admin?: boolean;
   };
   known_words: string[];
   inventory: Array<{ item_id: string; price_paid: number }>;
@@ -206,6 +209,32 @@ export interface ErrorPayload {
 // Type Mapping Table for Compile-Time Safety
 // -------------------------------------------------------------
 
+/** One registered player in the admin view; mianzi/aggro are what the NPC shows this player (shared + offset). */
+export interface AdminAttitude {
+  player_id: number;
+  login: string;
+  online: boolean;
+  mianzi: number;
+  aggro: number;
+  mianzi_offset: number;
+  aggro_offset: number;
+}
+
+/** Client → server: {npc_id}; server → admin: the NPC's shared mood and its attitude to every player. */
+export interface AdminNpcRelationsPayload {
+  npc_id: string;
+  shared?: { mianzi: number; aggro: number; state: string };
+  players?: AdminAttitude[];
+}
+
+/** Admin sets the mood the NPC shows one player (0..100). */
+export interface AdminSetRelationPayload {
+  npc_id: string;
+  player_id: number;
+  mianzi: number;
+  aggro: number;
+}
+
 export interface PacketMap {
   MOVE: MovePayload;
   PLAYER_MOVE: PlayerMovePayload;
@@ -225,6 +254,8 @@ export interface PacketMap {
   WELCOME: WelcomePayload;
   PLAYER_JOIN: PlayerJoinPayload;
   WORLD_EDIT: WorldEditPayload;
+  ADMIN_NPC_RELATIONS: AdminNpcRelationsPayload;
+  ADMIN_SET_RELATION: AdminSetRelationPayload;
   CONNECTION_CLOSED: ConnectionClosedPayload;
 }
 

@@ -1486,3 +1486,245 @@ html, body {
   padding: 8px;
 }
 
+
+/* --------------------------------------------------------------------------
+   Admin: NPC attitude towards players ([Q] while aiming at an NPC)
+   -------------------------------------------------------------------------- */
+.admin-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 4, 16, 0.78);
+  backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 75;
+  padding: 16px;
+}
+
+.admin-card {
+  width: min(620px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid #c77dff;
+  border-radius: 12px;
+  padding: 20px 22px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.9), 0 0 14px rgba(199, 125, 255, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid rgba(199, 125, 255, 0.3);
+  padding-bottom: 10px;
+}
+
+.admin-badge {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #120a1c;
+  background: #c77dff;
+  border-radius: 4px;
+  padding: 3px 7px;
+}
+
+.admin-title {
+  flex: 1;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #e2c2ff;
+}
+
+.admin-close {
+  background: transparent;
+  border: 1px solid rgba(199, 125, 255, 0.4);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+}
+
+.admin-close:hover {
+  color: var(--text-primary);
+  border-color: #c77dff;
+}
+
+.admin-shared,
+.admin-hint,
+.admin-footer,
+.admin-empty {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.admin-footer {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.admin-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  padding: 6px 8px;
+}
+
+.admin-row {
+  cursor: pointer;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.admin-row td {
+  padding: 8px;
+  vertical-align: middle;
+}
+
+.admin-row:hover,
+.admin-row:focus-visible {
+  background: rgba(199, 125, 255, 0.1);
+  outline: none;
+}
+
+.admin-row.selected {
+  background: rgba(199, 125, 255, 0.18);
+  box-shadow: inset 3px 0 0 #c77dff;
+}
+
+.admin-online {
+  color: #555b6b;
+  margin-right: 6px;
+  font-size: 0.7rem;
+}
+
+.admin-online.on {
+  color: var(--neon-green);
+}
+
+.admin-login {
+  font-weight: 600;
+}
+
+.admin-note {
+  font-size: 0.75rem;
+  color: #c9a6f0;
+  margin-top: 2px;
+}
+
+.admin-meter-cell {
+  white-space: nowrap;
+}
+
+.admin-meter {
+  display: inline-block;
+  width: 90px;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+.admin-meter-fill {
+  height: 100%;
+}
+
+.admin-meter.mianzi .admin-meter-fill {
+  background: var(--neon-green);
+}
+
+.admin-meter.aggro .admin-meter-fill {
+  background: var(--neon-red);
+}
+
+.admin-meter-value {
+  font-family: var(--font-mono);
+  display: inline-block;
+  min-width: 2.2em;
+  text-align: right;
+}
+
+.admin-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid rgba(199, 125, 255, 0.3);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: rgba(199, 125, 255, 0.06);
+}
+
+.admin-editor-title {
+  font-weight: 700;
+  color: #e2c2ff;
+}
+
+.admin-slider {
+  display: grid;
+  grid-template-columns: 90px 1fr 3em;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-slider input[type='range'] {
+  width: 100%;
+}
+
+.admin-slider.mianzi input[type='range'] {
+  accent-color: var(--neon-green);
+}
+
+.admin-slider.aggro input[type='range'] {
+  accent-color: var(--neon-red);
+}
+
+.admin-slider-value {
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.admin-save {
+  align-self: flex-end;
+  padding: 9px 18px;
+  background: rgba(199, 125, 255, 0.18);
+  border: 1px solid #c77dff;
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-save:hover {
+  background: rgba(199, 125, 255, 0.3);
+  box-shadow: 0 0 12px rgba(199, 125, 255, 0.35);
+}
+
+@media (max-width: 520px) {
+  .admin-meter {
+    width: 48px;
+  }
+  .admin-slider {
+    grid-template-columns: 70px 1fr 2.6em;
+  }
+}

@@ -575,3 +575,118 @@ func TestWorldEditAppliesWithoutRestart(t *testing.T) {
 		}
 	}
 }
+func TestAdminSetsNPCMoodPerPlayer(t *testing.T) {
+	cata, err := game.LoadCatalog("../../world/catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	seenAggro := []float64{}
+	aiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Context map[string]any `json:"context"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		seenAggro = append(seenAggro, body.Context["aggro"].(float64))
+		mu.Unlock()
+		reply := game.Reply{Tokens: []game.Token{cata.Words["word_hello"]}, Emotion: "neutral", Price: 700, State: "HAGGLING", Choices: game.Choices()}
+		json.NewEncoder(w).Encode(map[string]any{"raw": "", "parsed": reply})
+	}))
+	defer aiServer.Close()
+	f := start(t, testdb.New(t), aiServer.URL)
+	tokenA := account(t, f, "alice", "business")
+	tokenB := account(t, f, "boris", "culture")
+	if _, err = f.store.SQL.Exec("UPDATE players SET is_admin=true WHERE login='alice'"); err != nil {
+		t.Fatal(err)
+	}
+	a := dial(t, f, tokenA)
+	until(t, a, "WELCOME")
+	b := dial(t, f, tokenB)
+	until(t, b, "WELCOME")
+	until(t, a, "PLAYER_JOIN")
+	until(t, b, "PLAYER_JOIN")
+
+	send(t, b, "ADMIN_NPC_RELATIONS", map[string]any{"npc_id": "lao_wang"})
+	errorCode(t, b, "ADMIN_ONLY")
+
+	type row struct {
+		PlayerID int64  `json:"player_id"`
+		Login    string `json:"login"`
+		Online   bool   `json:"online"`
+		Mianzi   int    `json:"mianzi"`
+		Aggro    int    `json:"aggro"`
+	}
+	var list struct {
+		Shared  struct{ Mianzi, Aggro int } `json:"shared"`
+		Players []row                       `json:"players"`
+	}
+	send(t, a, "ADMIN_NPC_RELATIONS", map[string]any{"npc_id": "lao_wang"})
+	json.Unmarshal(until(t, a, "ADMIN_NPC_RELATIONS"), &list)
+	if len(list.Players) != 2 || list.Players[0].Login != "alice" || list.Players[1].Login != "boris" || !list.Players[1].Online || list.Players[1].Aggro != list.Shared.Aggro {
+		t.Fatalf("admin list: %+v", list)
+	}
+	boris := list.Players[1].PlayerID
+
+	// Alice opens the shared conversation so trading becomes possible.
+	move(t, a, 100, 125, 0)
+	move(t, b, 101, 125, 0)
+	send(t, a, "DIALOGUE", map[string]any{"npc_id": "lao_wang"})
+	until(t, a, "DIALOGUE_DONE")
+	var heard struct {
+		TurnID  string        `json:"turn_id"`
+		Choices []game.Choice `json:"choices"`
+	}
+	json.Unmarshal(until(t, b, "NPC_SPEECH"), &heard) // boris stands next to them and may answer too
+	if heard.TurnID == "" || len(heard.Choices) == 0 {
+		t.Fatalf("boris cannot answer: %+v", heard)
+	}
+
+	send(t, a, "ADMIN_SET_RELATION", map[string]any{"npc_id": "lao_wang", "player_id": boris, "mianzi": 10, "aggro": 90})
+	json.Unmarshal(until(t, a, "ADMIN_NPC_RELATIONS"), &list)
+	if list.Players[1].Aggro != 90 || list.Players[1].Mianzi != 10 || list.Players[0].Aggro != list.Shared.Aggro {
+		t.Fatalf("mood not set for boris only: %+v", list)
+	}
+	for {
+		var state struct {
+			Aggro int `json:"aggro"`
+		}
+		json.Unmarshal(until(t, b, "NPC_STATE"), &state)
+		if state.Aggro == 90 {
+			break // boris sees how Lao Wang now feels about him
+		}
+	}
+
+	send(t, b, "TRADE_START", map[string]any{"npc_id": "lao_wang", "item_id": "jade_amulet"})
+	errorCode(t, b, "NPC_AGGRO")
+	send(t, a, "TRADE_START", map[string]any{"npc_id": "lao_wang", "item_id": "jade_amulet"})
+	until(t, a, "TRADE_OPEN") // the shared mood towards alice is unchanged
+
+	send(t, b, "DIALOGUE", map[string]any{"npc_id": "lao_wang", "choice_id": heard.Choices[0].ID, "turn_id": heard.TurnID})
+	until(t, b, "DIALOGUE_DONE")
+	mu.Lock()
+	if len(seenAggro) != 2 || seenAggro[0] >= 75 || seenAggro[1] != 90 {
+		t.Fatalf("AI context aggro by speaker = %v, want shared for alice and 90 for boris", seenAggro)
+	}
+	mu.Unlock()
+
+	send(t, a, "ADMIN_SET_RELATION", map[string]any{"npc_id": "lao_wang", "player_id": boris, "mianzi": 10, "aggro": 101})
+	errorCode(t, a, "INVALID_ADMIN_RELATION")
+
+	// The offset is stored: after reconnecting boris still faces an angry Lao Wang.
+	b.Close()
+	b = dial(t, f, tokenB)
+	for {
+		var state struct {
+			NPCID string `json:"npc_id"`
+			Aggro int    `json:"aggro"`
+		}
+		json.Unmarshal(until(t, b, "NPC_STATE"), &state)
+		if state.NPCID == "lao_wang" {
+			if state.Aggro < 75 {
+				t.Fatalf("offset lost after reconnect: %+v", state)
+			}
+			break
+		}
+	}
+}

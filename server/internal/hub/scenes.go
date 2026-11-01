@@ -123,7 +123,7 @@ func (h *Hub) state(s *liveScene) map[string]any {
 	return map[string]any{"npc_id": s.data.NPCID, "state": s.data.State, "mianzi": s.data.Mianzi, "aggro": s.data.Aggro, "price": s.data.Price, "scene_version": s.data.Version, "turn_id": turnID(s), "offers": h.offers(s.data.NPCID), "busy": s.owner != nil}
 }
 func (h *Hub) sendScene(c *client, s *liveScene) {
-	h.emit(c, "NPC_STATE", h.state(s))
+	h.emit(c, "NPC_STATE", h.stateFor(c, s))
 	if s.stored == nil {
 		return
 	}
@@ -213,7 +213,7 @@ func (h *Hub) dialogueDone(s *liveScene, status string) {
 	}
 	npc := h.catalog.NPCs[s.data.NPCID]
 	for _, observer := range h.nearby(npc.X, npc.Z, speechRadius) {
-		h.emit(observer, "NPC_STATE", h.state(s))
+		h.emit(observer, "NPC_STATE", h.stateFor(observer, s))
 		h.emit(observer, "DIALOGUE_DONE", map[string]any{"npc_id": npc.ID, "status": status, "scene_version": s.data.Version})
 	}
 }
