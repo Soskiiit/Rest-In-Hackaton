@@ -1,0 +1,17 @@
+{
+  "name": "street-cart-preview",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "python3 -m http.server 8766 --bind 127.0.0.1",
+    "validate": "node validate.mjs",
+    "previews": "node previews.mjs"
+  },
+  "dependencies": {
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "gltf-validator": "2.0.0-dev.3.10",
+    "playwright": "1.58.2"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "units": "meters",
+  "up": "+Y",
+  "forward": "+Z (customer side)",
+  "origin": "cart centre, ground",
+  "rig": "rigid node hierarchy; no skinning",
+  "clips": {
+    "Idle": 4,
+    "Roll": 2,
+    "Open": 1.5
+  },
+  "models": [
+    {
+      "file": "cart_banh_mi.glb",
+      "bytes": 140360,
+      "triangles": 4268,
+      "nodes": 116,
+      "animations": [
+        "Idle",
+        "Roll",
+        "Open"
+      ]
+    },
+    {
+      "file": "cart_thai_noodle.glb",
+      "bytes": 175248,
+      "triangles": 4416,
+      "nodes": 117,
+      "animations": [
+        "Idle",
+        "Roll",
+        "Open"
+      ]
+    }
+  ]
+}
