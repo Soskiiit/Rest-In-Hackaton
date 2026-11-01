@@ -290,7 +290,7 @@ func TestConcurrentServerMigrationsAreSerialized(t *testing.T) {
 				defer s.Close()
 				var n int
 				err = s.SQL.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&n)
-				if err == nil && n != 3 {
+				if err == nil && n != 4 {
 					err = errors.New("migration count changed")
 				}
 			}
