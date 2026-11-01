@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SCENE_COLORS } from './colors';
 
 /**
@@ -251,6 +252,81 @@ export function disposeHierarchy(object: THREE.Object3D | null | undefined): voi
 
 export class ChunkBuilder {
   /**
+   * Batches static sub-geometries by material within a group into merged meshes,
+   * retaining invisible collision proxies for wall/stall obstacles.
+   */
+  public static batchStaticGroup(sourceGroup: THREE.Group): THREE.Group {
+    sourceGroup.updateMatrixWorld(true);
+    const inverseSource = new THREE.Matrix4().copy(sourceGroup.matrixWorld).invert();
+
+    interface Bucket {
+      material: THREE.Material;
+      geometries: THREE.BufferGeometry[];
+      castShadow: boolean;
+      receiveShadow: boolean;
+    }
+    const buckets = new Map<string, Bucket>();
+    const proxies: THREE.Mesh[] = [];
+
+    sourceGroup.traverse((child) => {
+      if ((child as any).userData?.isWall || (child as any).userData?.isStall) {
+        const mesh = child as THREE.Mesh;
+        const proxy = new THREE.Mesh(mesh.geometry, new THREE.MeshBasicMaterial());
+        const localMat = new THREE.Matrix4().multiplyMatrices(inverseSource, mesh.matrixWorld);
+        localMat.decompose(proxy.position, proxy.quaternion, proxy.scale);
+        proxy.updateMatrix();
+        proxy.matrixAutoUpdate = false;
+        proxy.userData = { ...mesh.userData };
+        proxy.visible = false;
+        proxies.push(proxy);
+      }
+
+      if ((child as any).isMesh) {
+        const mesh = child as THREE.Mesh;
+        const mat = mesh.material as any;
+        const key = `${mat.type}_${mat.color ? mat.color.getHex() : ''}_${mat.roughness}_${mat.metalness}_${mat.map ? mat.map.uuid : ''}_${mat.emissive ? mat.emissive.getHex() : ''}_${mat.emissiveIntensity}_${mesh.castShadow}_${mesh.receiveShadow}`;
+        if (!buckets.has(key)) {
+          buckets.set(key, {
+            material: mat,
+            geometries: [],
+            castShadow: mesh.castShadow,
+            receiveShadow: mesh.receiveShadow,
+          });
+        }
+        const clonedGeo = mesh.geometry.clone();
+        const localMat = new THREE.Matrix4().multiplyMatrices(inverseSource, mesh.matrixWorld);
+        clonedGeo.applyMatrix4(localMat);
+        buckets.get(key)!.geometries.push(clonedGeo);
+      }
+    });
+
+    const mergedGroup = new THREE.Group();
+    mergedGroup.name = sourceGroup.name;
+
+    for (const proxy of proxies) {
+      mergedGroup.add(proxy);
+    }
+
+    for (const [_, bucket] of buckets.entries()) {
+      if (bucket.geometries.length === 0) continue;
+      const mergedGeo = BufferGeometryUtils.mergeGeometries(bucket.geometries, false);
+      for (const g of bucket.geometries) {
+        g.dispose();
+      }
+      if (mergedGeo) {
+        const mergedMesh = new THREE.Mesh(mergedGeo, bucket.material);
+        mergedMesh.castShadow = bucket.castShadow;
+        mergedMesh.receiveShadow = bucket.receiveShadow;
+        mergedMesh.matrixAutoUpdate = false;
+        mergedMesh.updateMatrix();
+        mergedGroup.add(mergedMesh);
+      }
+    }
+
+    return mergedGroup;
+  }
+
+  /**
    * Main entry point: builds a complete chunk THREE.Group positioned at world (cx * 20, 0, cz * 20).
    */
   public static buildChunk(
@@ -280,10 +356,10 @@ export class ChunkBuilder {
     const rng = new SeededRandom(seed);
 
     const stalls = this.generateProceduralStalls(rng, cx, cz, opts);
-    chunkGroup.add(stalls);
+    chunkGroup.add(this.batchStaticGroup(stalls));
 
     const proceduralProps = this.generateProceduralProps(rng, opts);
-    chunkGroup.add(proceduralProps);
+    chunkGroup.add(this.batchStaticGroup(proceduralProps));
 
     // Freeze local matrices on all static meshes to eliminate scene.updateMatrixWorld CPU overhead
     chunkGroup.traverse((child) => {

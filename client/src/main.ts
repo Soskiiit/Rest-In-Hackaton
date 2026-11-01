@@ -18,6 +18,7 @@ import { HUD } from './ui/HUD';
 import { DialogueUI } from './ui/DialogueUI';
 import { QuizPanel } from './ui/QuizPanel';
 import { TTS } from './audio/TTS';
+import { Profiler } from './engine/Profiler';
 import { AuthScreen } from './ui/AuthScreen';
 import {
   AuthClient,
@@ -103,6 +104,9 @@ class Application {
   private lastSentZ = Infinity;
   private lastSentRotation = Infinity;
 
+  // Real-Time Subsystem Profiler
+  private profiler: Profiler = Profiler.getInstance();
+
   // FPS Diagnostics
   private frameCount = 0;
   private fpsAccumulator = 0;
@@ -145,6 +149,7 @@ class Application {
     console.log('[Main] Initializing Rest-In-Hackaton Client...');
 
     this.bindDomElements();
+    this.profiler.initUI();
     this.initHUD();
     this.initDialogueUI();
     this.initQuizPanel();
@@ -208,6 +213,31 @@ class Application {
         event.stopPropagation();
         this.toggleAppMode();
       };
+    }
+
+    // 1b. Locate or create #profiler-hud-btn in HUD header
+    const profilerHudBtn = document.getElementById('profiler-hud-btn');
+    if (!profilerHudBtn && typeof document !== 'undefined') {
+      const hudHeader = document.querySelector('#hud .hud-header');
+      if (hudHeader) {
+        const pBtn = document.createElement('button');
+        pBtn.id = 'profiler-hud-btn';
+        pBtn.className = 'cyber-mode-btn';
+        pBtn.type = 'button';
+        pBtn.title = 'Профилирование производительности (F3)';
+        pBtn.innerHTML = `<span class="mode-icon">⚡</span> <span>Profiler</span> <span class="mode-hotkey">[F3]</span>`;
+        pBtn.onclick = (e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.profiler.toggle();
+        };
+        const statusEl = document.getElementById('hud-status');
+        if (statusEl && statusEl.parentNode === hudHeader) {
+          hudHeader.insertBefore(pBtn, statusEl);
+        } else {
+          hudHeader.appendChild(pBtn);
+        }
+      }
     }
 
     // 2. Locate or create #hud-editor-stats in HUD body
@@ -1222,6 +1252,8 @@ class Application {
     const delta = Math.min((currentTime - this.lastTime) / 1000, 0.1);
     this.lastTime = currentTime;
 
+    this.profiler.begin('Frame');
+
     // 1. Update FPS Diagnostics
     this.frameCount++;
     this.fpsAccumulator += delta;
@@ -1237,6 +1269,7 @@ class Application {
     let viewY: number;
     let viewZ: number;
 
+    this.profiler.begin('Controller');
     if (isEditor) {
       // --- EDITOR MODE ---
       if (this.levelEditor) {
@@ -1274,14 +1307,26 @@ class Application {
       // 5. Transmit Player Position at ~20 Hz
       this.transmitPositionIfNeeded(delta);
     }
+    this.profiler.end('Controller');
 
+    this.profiler.begin('Multiplayer');
     this.otherPlayerManager.update(delta);
+    this.profiler.end('Multiplayer');
 
     // Dynamic Chunk Streaming (Feature F5) around active viewpoint (camera in editor, player in game)
+    this.profiler.begin('ChunkStreaming');
     this.world.update(delta, viewX, viewZ);
+    // Cull level editor entities beyond active view radius (35m)
+    this.levelEditor?.cullDistantEntities(viewX, viewZ, 35.0);
+    this.profiler.end('ChunkStreaming');
 
     // 4. Render 3D Scene
+    this.profiler.begin('SceneRender');
     this.world.render();
+    this.profiler.end('SceneRender');
+
+    // 5. Record GPU & Render Statistics
+    this.profiler.recordRenderInfo(this.world.getRenderer());
 
     // 6. Update Real-Time HUD Overlay Every Frame
     const cachePercent = this.world.getCachePercentage?.() ?? 9;
@@ -1312,6 +1357,9 @@ class Application {
         this.playerBalance
       );
     }
+
+    this.profiler.endFrame(delta);
+    this.profiler.end('Frame');
   }
 
   private transmitPositionIfNeeded(delta: number): void {

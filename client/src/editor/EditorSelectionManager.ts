@@ -166,8 +166,12 @@ export class EditorSelectionManager {
     const worldPos = new THREE.Vector3();
     root.getWorldPosition(worldPos);
     entity.worldPos = { x: worldPos.x, y: worldPos.y, z: worldPos.z };
-    const { lx, lz } = worldToLocal(worldPos.x, worldPos.z);
-    entity.localPos = { x: lx, y: worldPos.y, z: lz };
+    if (worldPos.x >= 0 && worldPos.x <= 200 && worldPos.z >= 0 && worldPos.z <= 200) {
+      const { lx, lz } = worldToLocal(worldPos.x, worldPos.z);
+      entity.localPos = { x: lx, y: worldPos.y, z: lz };
+    } else {
+      entity.localPos = { x: root.position.x, y: root.position.y, z: root.position.z };
+    }
   }
 
   // =========================================================================
