@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"hackaton/server/internal/db"
 	"hackaton/server/internal/game"
@@ -32,15 +34,42 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	world, err := game.LoadWorld(env("WORLD_DIR", "world/chunks"), catalog)
-	if err != nil {
-		return err
-	}
 	store, err := db.Open(os.Getenv("DATABASE_URL"))
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	worldDir := env("WORLD_DIR", "world/chunks")
+	stored, err := store.LoadWorld(context.Background(), nil)
+	if errors.Is(err, db.ErrWorldUninitialized) {
+		initial, loadErr := game.LoadWorld(worldDir, catalog)
+		if loadErr != nil {
+			return loadErr
+		}
+		seed := make(map[string]json.RawMessage, len(initial.Chunks))
+		for id, chunk := range initial.Chunks {
+			raw, marshalErr := json.Marshal(chunk)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			seed[id] = raw
+		}
+		stored, err = store.LoadWorld(context.Background(), seed)
+	}
+	if err != nil {
+		return err
+	}
+	data := make(map[string]json.RawMessage, len(stored))
+	for id, chunk := range stored {
+		data[id] = chunk.Data
+	}
+	world, err := game.LoadWorldData(worldDir, data, catalog)
+	if err != nil {
+		return err
+	}
+	for id, chunk := range stored {
+		world.Revisions[id] = chunk.Revision
+	}
 	h := hub.New(store, world, catalog, game.NewAI(env("AI_URL", "http://127.0.0.1:8000"), catalog))
 	defer h.Close()
 	app, err := handler.New(store, h, catalog, secret, strings.Split(env("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"), ","))

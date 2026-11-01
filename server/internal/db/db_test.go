@@ -107,7 +107,7 @@ func TestPersistenceConstraintsAndTransactions(t *testing.T) {
 		t.Fatalf("saved relation: %+v %v", r, err)
 	}
 	var n int
-	if err = s.SQL.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&n); err != nil || n != 2 {
+	if err = s.SQL.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&n); err != nil || n != 3 {
 		t.Fatalf("migrations: %d %v", n, err)
 	}
 	inventory, err := s.Inventory(ctx, p.ID)

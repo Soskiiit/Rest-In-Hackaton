@@ -136,7 +136,7 @@ Ping каждые 20 секунд; клиент должен отвечать Po
 | INSPECT | {item_id,answer_id,quiz_id}; ответить на активный квиз |
 | TRADE_START | {npc_id,item_id}; открыть персональное предложение покупки |
 | CALCULATOR | {npc_id,item_id,trade_id,amount}; подтвердить сумму калькулятора |
-| WORLD_EDIT | {chunk_ids:[...]}; редактор уровней сохранил эти чанки, остальным игрокам нужно их перечитать |
+
 
 Повторный ответ квиза с использованным quiz_id → STALE_QUIZ.
 Во время AI-запроса следующий DIALOGUE → DIALOGUE_BUSY; движение и чат продолжаются.
@@ -149,7 +149,7 @@ DIALOGUE без choice_id возвращает существующий общи
 | type | payload |
 |---|---|
 | WELCOME | {player,known_words,inventory,world:{total_chunks,total_bytes,chunk_size,max_percent}} |
-| CHUNK_LOAD | {chunk_id,buildings,lanterns,signs,npcs,items} |
+| CHUNK_LOAD | {chunk_id,buildings,lanterns,signs,npcs,items,revision} |
 | CHUNK_UNLOAD | {chunk_ids:[...]} |
 | WORLD_STATS | {loaded_chunks,total_chunks,loaded_bytes,total_bytes,data_percent,chunk_percent} |
 | PLAYER_JOIN | {id,login,profile,x,z,rotation}; без баланса — кошелёк виден только владельцу (WELCOME, BALANCE) |
@@ -178,11 +178,16 @@ INVALID_INSPECT, ITEM_OUT_OF_RANGE, STALE_QUIZ, INVALID_ANSWER, DB_ERROR,
 INVALID_TRADE, INVALID_PRODUCT, DIALOGUE_REQUIRED, NPC_AGGRO, ITEM_ALREADY_OWNED,
 TRADE_EXPIRED, STALE_TRADE, INSUFFICIENT_FUNDS, INVALID_WORLD_EDIT.
 
-WORLD_EDIT принимает от 1 до 100 существующих chunk_id. Файлы чанков пишет редактор, сервер сразу
-перечитывает их с диска (всё или ничего): обновляет свою копию мира и позиции NPC/предметов для диалогов,
-квиза и торга; у всех, у кого чанк загружен, — CHUNK_UNLOAD, затем свежий CHUNK_LOAD и WORLD_STATS,
-сцены NPC пересчитываются по новым координатам. Перезапуск не нужен. Если файл не прошёл проверку
-(см. «Мир и память»), автор получает INVALID_WORLD_EDIT, мир и остальные игроки не меняются.
+Редактор сохраняет карту через авторизованный HTTP API `POST /world/chunks`. Вход:
+`{"chunks":{"5_6":{"data":{...},"revision":1}}}`. Все чанки проверяются и записываются
+в PostgreSQL одной транзакцией; успешный ответ содержит актуальные `chunks` с новыми версиями.
+При устаревшей версии возвращается 409 `WORLD_CONFLICT`; редактор сохраняет локальные правки.
+После записи сервер рассылает `CHUNK_UNLOAD`, затем `CHUNK_LOAD` с `revision`.
+`GET /world/chunks` возвращает снимок карты и версии. Оба метода требуют Bearer JWT.
+Файлы мира используются только для первоначального заполнения пустой таблицы world_chunks;
+после этого PostgreSQL является источником данных и мир переживает перезапуск.
+`WORLD_EDIT` в режиме базы данных не используется.
+
 При сетевой ошибке или DB_ERROR после подтверждения повторяйте CALCULATOR с тем же trade_id и параметрами:
 квитанция позволяет узнать результат без повторного списания. Для устаревшей/просроченной сделки нужен новый TRADE_START.
 Текст чата и NPC выводите через textContent, без интерпретации HTML.

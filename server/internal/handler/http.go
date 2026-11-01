@@ -60,6 +60,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/register", a.register)
 	mux.HandleFunc("POST /auth/login", a.login)
 	mux.HandleFunc("GET /ws", a.ws)
+	mux.HandleFunc("GET /world/chunks", a.worldChunks)
+	mux.HandleFunc("POST /world/chunks", a.worldChunks)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if origin := r.Header.Get("Origin"); origin != "" {
@@ -180,6 +182,46 @@ func (a *App) authResponse(w http.ResponseWriter, r *http.Request, p db.Player, 
 func (a *App) Token(id int64, expires time.Time) (string, error) {
 	claims := jwt.RegisteredClaims{Subject: strconv.FormatInt(id, 10), Issuer: "hackaton/server", IssuedAt: jwt.NewNumericDate(time.Now()), ExpiresAt: jwt.NewNumericDate(expires)}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(a.secret)
+}
+func (a *App) worldChunks(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	claims := &jwt.RegisteredClaims{}
+	_, err := jwt.ParseWithClaims(raw, claims, func(t *jwt.Token) (any, error) { return a.secret, nil }, jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer("hackaton/server"), jwt.WithExpirationRequired())
+	id, parseErr := strconv.ParseInt(claims.Subject, 10, 64)
+	if err != nil || parseErr != nil || id < 1 {
+		failure(w, 401, "INVALID_TOKEN")
+		return
+	}
+	if _, err = a.Store.Player(r.Context(), id); err != nil {
+		failure(w, 401, "INVALID_TOKEN")
+		return
+	}
+	var updates map[string]db.WorldChunk
+	if r.Method == http.MethodPost {
+		body, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
+		var payload struct {
+			Chunks map[string]db.WorldChunk `json:"chunks"`
+		}
+		if readErr != nil || hub.Decode(body, &payload) != nil || len(payload.Chunks) == 0 || len(payload.Chunks) > 100 {
+			failure(w, 400, "INVALID_WORLD_EDIT")
+			return
+		}
+		updates = payload.Chunks
+	}
+	chunks, err := a.Hub.World(r.Context(), updates)
+	if errors.Is(err, db.ErrWorldConflict) {
+		failure(w, 409, "WORLD_CONFLICT")
+		return
+	}
+	if err != nil {
+		if updates != nil {
+			failure(w, 400, "WORLD_SAVE_FAILED")
+		} else {
+			failure(w, 500, "DB_ERROR")
+		}
+		return
+	}
+	respond(w, 200, map[string]any{"chunks": chunks})
 }
 func (a *App) ws(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("token")

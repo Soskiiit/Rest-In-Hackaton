@@ -1083,7 +1083,7 @@ describe('Milestone M5: Level Editor Master Integration & Full Workflow', () => 
       expect(chunk11?.items.length).toBeGreaterThanOrEqual(1);
 
       // Toast feedback
-      expect(hud.toasts).toContain('✅ Изменения чанков сохранены на диск!');
+      expect(hud.toasts).toContain('✅ Изменения карты сохранены');
     });
 
     it('should autosave dirty chunks after edits settle', async () => {

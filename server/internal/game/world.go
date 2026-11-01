@@ -54,6 +54,7 @@ type World struct {
 	Chunks     map[string]Chunk
 	Sizes      map[string]int
 	TotalBytes int
+	Revisions  map[string]int64
 	NPCs       map[string]Vec3 // world position of each placed catalog NPC
 	Items      map[string]Vec3 // world position of each placed catalog item
 }
@@ -184,6 +185,35 @@ func LoadWorld(dir string, catalog *Catalog) (*World, error) {
 	return w, nil
 }
 
+// LoadWorldData restores the complete authoritative world without reading chunk files.
+func LoadWorldData(dir string, chunks map[string]json.RawMessage, catalog *Catalog) (*World, error) {
+	if len(chunks) != 100 {
+		return nil, fmt.Errorf("world must contain 100 chunks")
+	}
+	w := &World{Dir: dir, Chunks: map[string]Chunk{}, Sizes: map[string]int{}, Revisions: map[string]int64{}}
+	for x := 0; x < 10; x++ {
+		for z := 0; z < 10; z++ {
+			id := fmt.Sprintf("%d_%d", x, z)
+			data, ok := chunks[id]
+			if !ok {
+				return nil, fmt.Errorf("missing chunk %s", id)
+			}
+			chunk, size, err := parseChunk(id, data)
+			if err != nil {
+				return nil, err
+			}
+			w.Chunks[id], w.Sizes[id] = chunk, size
+		}
+	}
+	total, err := budget(w.Sizes)
+	if err != nil {
+		return nil, err
+	}
+	w.TotalBytes = total
+	w.NPCs, w.Items = placements(w.Chunks, catalog)
+	return w, nil
+}
+
 // Reload re-reads the given chunk files (saved by the level editor) and applies them all or nothing.
 func (w *World) Reload(ids []string, catalog *Catalog) error {
 	chunks := make(map[string]Chunk, len(w.Chunks))
@@ -214,6 +244,34 @@ func (w *World) Reload(ids []string, catalog *Catalog) error {
 	w.Chunks, w.Sizes, w.TotalBytes = chunks, sizes, total
 	w.NPCs, w.Items = placements(chunks, catalog)
 	return nil
+}
+
+// Updated validates a complete candidate without mutating the active world.
+func (w *World) Updated(updates map[string]json.RawMessage, catalog *Catalog) (*World, error) {
+	next := &World{Dir: w.Dir, Chunks: make(map[string]Chunk, len(w.Chunks)), Sizes: make(map[string]int, len(w.Sizes)), Revisions: make(map[string]int64, len(w.Chunks))}
+	for id, chunk := range w.Chunks {
+		next.Chunks[id] = chunk
+		next.Sizes[id] = w.Sizes[id]
+		next.Revisions[id] = w.Revisions[id]
+	}
+	for id, data := range updates {
+		if _, ok := w.Chunks[id]; !ok {
+			return nil, fmt.Errorf("unknown chunk %s", id)
+		}
+		chunk, size, err := parseChunk(id, data)
+		if err != nil {
+			return nil, err
+		}
+		next.Chunks[id] = chunk
+		next.Sizes[id] = size
+	}
+	total, err := budget(next.Sizes)
+	if err != nil {
+		return nil, err
+	}
+	next.TotalBytes = total
+	next.NPCs, next.Items = placements(next.Chunks, catalog)
+	return next, nil
 }
 
 // PlaceCatalog returns a copy of the catalog with NPC and item positions taken from the world.

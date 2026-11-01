@@ -140,6 +140,9 @@ export interface BalancePayload {
 
 export interface ChunkLoadPayload {
   chunk_id: string;
+  revision?: number;
+  buildings?: Array<{type: string; x: number; z: number}>;
+  signs?: Array<{text: string; x: number; y: number; z: number}>;
   objects?: any[];
   lanterns?: Array<{ x: number; y: number; z: number }>;
   npc_id?: string;

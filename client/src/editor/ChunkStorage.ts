@@ -359,3 +359,62 @@ export class CompositeChunkStorage implements IChunkStorage {
     return saved;
   }
 }
+
+/** Authenticated, versioned server map. No local fallback in online mode. */
+export class ServerWorldStorage implements IChunkStorage {
+  private chunks = new Map<string, RawChunkData>();
+  private versions = new Map<string, number>();
+  public lastSharedChunkIds: string[] = [];
+  constructor(private baseUrl: string, private token: string) {}
+  private async request(method: string, body?: unknown): Promise<Record<string, {data: RawChunkData; revision: number}>> {
+    const response = await fetch(this.baseUrl + '/world/chunks', {
+      method, headers: { Authorization: 'Bearer ' + this.token, 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(response.status === 409 ? 'WORLD_CONFLICT' : 'WORLD_SAVE_FAILED');
+    const result = await response.json();
+    return result.chunks;
+  }
+  public isCurrent(id: string, revision: number): boolean {
+    return revision >= (this.versions.get(id) ?? 0);
+  }
+  public noteChunk(data: RawChunkData, revision: number): void {
+    if (revision < (this.versions.get(data.chunk_id) ?? 0)) return;
+    this.chunks.set(data.chunk_id, data);
+    this.versions.set(data.chunk_id, revision);
+  }
+  public async refreshVersions(ids: string[]): Promise<void> {
+    const chunks = await this.request('GET');
+    for (const id of ids) {
+      const value = chunks[id];
+      if (!value) throw new Error('WORLD_SAVE_FAILED');
+      this.noteChunk(value.data, value.revision);
+    }
+  }
+  public async listChunks(): Promise<string[]> {
+    const chunks = await this.request('GET');
+    for (const value of Object.values(chunks)) this.noteChunk(value.data, value.revision);
+    return [...this.chunks.keys()].sort();
+  }
+  public async loadChunk(id: string): Promise<RawChunkData | null> { return this.chunks.get(id) ?? null; }
+  public async saveChunk(id: string, data: RawChunkData): Promise<boolean> {
+    return (await this.saveAllDirtyChunks(new Map([[id, data]]))) === 1;
+  }
+  public async saveAllDirtyChunks(chunks: Map<string, RawChunkData>): Promise<number> {
+    this.lastSharedChunkIds = [];
+    const changes: Record<string, {data: RawChunkData; revision: number}> = {};
+    for (const [id, data] of chunks) {
+      const revision = this.versions.get(id);
+      if (!revision) throw new Error('WORLD_CONFLICT');
+      changes[id] = { data, revision };
+    }
+    const saved = await this.request('POST', { chunks: changes });
+    for (const id of chunks.keys()) {
+      const value = saved[id];
+      if (!value) throw new Error('WORLD_SAVE_FAILED');
+      this.noteChunk(value.data, value.revision);
+    }
+    this.lastSharedChunkIds = [...chunks.keys()];
+    return chunks.size;
+  }
+}

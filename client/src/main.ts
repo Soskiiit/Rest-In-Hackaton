@@ -12,6 +12,8 @@ import { AppMode, EditorStateManager } from './editor/EditorState';
 import { EditorCamera } from './editor/EditorCamera';
 import { PlayerGhostBeacon } from './editor/PlayerGhostBeacon';
 import { LevelEditor } from './editor/LevelEditor';
+import { ServerWorldStorage } from './editor/ChunkStorage';
+import { sanitizeChunkData } from './editor/ChunkPersistence';
 import { WSClient } from './net/WSClient';
 import { MockServer } from './net/MockServer';
 import { HUD } from './ui/HUD';
@@ -172,11 +174,6 @@ class Application {
     // Milestone M5: Reconstruct saved chunk entities on startup
     await this.levelEditor.loadAllStoredChunks().catch((err) => {
       console.warn('[Main] Non-fatal error loading saved chunks:', err);
-    });
-
-    // Shared map: chunks saved to the shared storage are announced to every other player
-    this.levelEditor.onChunksSaved((chunkIds) => {
-      this.wsClient?.send('WORLD_EDIT', { chunk_ids: chunkIds });
     });
 
     console.log('[Main] Initialization complete. Starting render loop.');
@@ -357,6 +354,12 @@ class Application {
   }
 
   private wireNetworkHandlers(client: WSClient): void {
+    client.onConnectionChange((state) => {
+      if (state === 'open' && !client.isMockMode) {
+        this.hud.setWsStatus('connected');
+        void this.levelEditor.saveAllDirtyChunks(true);
+      }
+    });
     // 1. Remote Player Movement (Stage 1)
     client.on('PLAYER_MOVE', (payload) => {
       this.otherPlayerManager.updatePlayer(payload);
@@ -420,6 +423,16 @@ class Application {
     // 7. Чанки от сервера: где сейчас стоят Лао Ван и чайник (после правок редактора — на новом месте)
     client.on('CHUNK_LOAD', (payload: ChunkLoadPayload) => {
       this.applyServerPlacements(payload);
+      if (this.levelEditor.storage instanceof ServerWorldStorage && payload.revision) {
+        const data = sanitizeChunkData(payload);
+        if (this.levelEditor.storage.isCurrent(data.chunk_id, payload.revision) &&
+            this.levelEditor.applyServerChunk(data)) this.levelEditor.storage.noteChunk(data, payload.revision);
+      }
+    });
+    client.on('CHUNK_UNLOAD', (payload) => {
+      if (this.levelEditor.storage instanceof ServerWorldStorage) {
+        for (const id of payload.chunk_ids) this.levelEditor.unloadServerChunk(id);
+      }
     });
 
     // 7a. Другой игрок сохранил правки в редакторе уровней: перечитываем эти чанки
@@ -433,6 +446,8 @@ class Application {
 
     // 8. Сервер закрыл соединение: 1008 = этот аккаунт уже в игре
     client.on('CONNECTION_CLOSED', (payload: ConnectionClosedPayload) => {
+      this.otherPlayerManager.clear();
+      this.hud.setWsStatus('disconnected');
       if (payload.code === 1008) {
         void this.handleSessionRejected(
           'Этот аккаунт уже в игре на другом устройстве. Войдите под другим логином.'
@@ -442,6 +457,9 @@ class Application {
 
     client.on('ERROR', (payload) => {
       console.warn('[Main] Server error:', payload?.code ?? payload);
+      if (payload?.code === 'INVALID_WORLD_EDIT') {
+        this.hud.showToast('⚠️ Сервер отклонил изменения карты. Проверьте чанки и повторите сохранение.', 6000);
+      }
     });
   }
 
@@ -506,6 +524,7 @@ class Application {
     const authClient = this.authClient!;
     this.wsClient?.disconnect();
 
+    this.levelEditor.storage = new ServerWorldStorage(authClient.apiBase, session.token);
     const client = new WSClient({ url: wsUrlFor(authClient.apiBase, session.token), mock: false });
     this.wsClient = client;
     this.wireNetworkHandlers(client);

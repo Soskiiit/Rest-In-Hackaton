@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gorilla/websocket"
 	"hackaton/server/internal/db"
@@ -93,6 +94,14 @@ type aiDone struct {
 	text     string
 	fallback bool
 }
+type worldRequest struct {
+	updates  map[string]db.WorldChunk
+	response chan worldResponse
+}
+type worldResponse struct {
+	chunks map[string]db.WorldChunk
+	err    error
+}
 type aiPartial struct {
 	scene    db.Scene
 	c        *client
@@ -122,6 +131,65 @@ func New(s *db.Store, w *game.World, c *game.Catalog, ai *game.AI) *Hub {
 	go h.run()
 	return h
 }
+
+// World serializes snapshots and edits with all game events.
+func (h *Hub) World(ctx context.Context, updates map[string]db.WorldChunk) (map[string]db.WorldChunk, error) {
+	reply := make(chan worldResponse, 1)
+	select {
+	case h.events <- worldRequest{updates: updates, response: reply}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-h.done:
+		return nil, errors.New("hub closed")
+	}
+	select {
+	case result := <-reply:
+		return result.chunks, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-h.done:
+		return nil, errors.New("hub closed")
+	}
+}
+func (h *Hub) worldRequest(e worldRequest) {
+	if e.updates != nil {
+		if len(e.updates) == 0 || len(e.updates) > len(h.world.Chunks) {
+			e.response <- worldResponse{err: errors.New("invalid world edit")}
+			return
+		}
+		raw := make(map[string]json.RawMessage, len(e.updates))
+		for id, u := range e.updates {
+			if u.Revision < 1 || h.world.Revisions[id] != u.Revision {
+				e.response <- worldResponse{err: db.ErrWorldConflict}
+				return
+			}
+			raw[id] = u.Data
+		}
+		candidate, err := h.world.Updated(raw, h.catalog)
+		if err != nil {
+			e.response <- worldResponse{err: err}
+			return
+		}
+		if err = h.store.SaveWorld(h.ctx, e.updates); err != nil {
+			e.response <- worldResponse{err: err}
+			return
+		}
+		ids := make([]string, 0, len(e.updates))
+		for id := range e.updates {
+			candidate.Revisions[id]++
+			ids = append(ids, id)
+		}
+		h.world = candidate
+		h.applyWorldEdit(ids)
+	}
+	result := make(map[string]db.WorldChunk, len(h.world.Chunks))
+	for id, chunk := range h.world.Chunks {
+		raw, _ := json.Marshal(chunk)
+		result[id] = db.WorldChunk{Data: raw, Revision: h.world.Revisions[id]}
+	}
+	e.response <- worldResponse{chunks: result}
+}
+
 func (h *Hub) Attach(conn *websocket.Conn, id int64, expires time.Time) {
 	accepted := make(chan struct{})
 	select {
@@ -158,6 +226,8 @@ func (h *Hub) run() {
 			}
 		case event := <-h.events:
 			switch e := event.(type) {
+			case worldRequest:
+				h.worldRequest(e)
 			case join:
 				h.add(e)
 			case leave:
@@ -334,7 +404,10 @@ func (h *Hub) stream(c *client) {
 	}
 	for _, id := range ids {
 		if !c.loaded[id] {
-			h.emit(c, "CHUNK_LOAD", h.world.Chunks[id])
+			h.emit(c, "CHUNK_LOAD", struct {
+				game.Chunk
+				Revision int64 `json:"revision"`
+			}{h.world.Chunks[id], h.world.Revisions[id]})
 		}
 	}
 	c.loaded = next
@@ -460,6 +533,10 @@ func (h *Hub) handle(c *client, p Packet) {
 	case "INSPECT":
 		h.inspect(c, p.Payload)
 	case "WORLD_EDIT":
+		if h.world.Revisions != nil {
+			h.fail(c, "INVALID_WORLD_EDIT")
+			return
+		}
 		// The level editor saved these chunk files; tell everyone else to reload them.
 		var v struct {
 			ChunkIDs []string `json:"chunk_ids"`
