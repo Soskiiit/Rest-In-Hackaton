@@ -1,4 +1,10 @@
 import * as THREE from 'three';
+import {
+  getTouristTemplate,
+  loadTouristTemplate,
+  createTouristAvatarInstance,
+  type TouristAvatarInstance,
+} from './TouristModel';
 
 /**
  * Configuration options for PlayerController.
@@ -66,6 +72,8 @@ export class PlayerController {
   private isThirdPerson: boolean = false;
   private thirdPersonDistance: number = 3.5;
   private localAvatarGroup: THREE.Group | null = null;
+  private localTourist: TouristAvatarInstance | null = null;
+  private placeholderLocalMeshes: THREE.Object3D[] = [];
 
   // Collision obstacles (Axis-Aligned Bounding Boxes)
   private obstacles: THREE.Box3[] = [];
@@ -96,57 +104,101 @@ export class PlayerController {
 
   /**
    * Optional helper to attach a local avatar mesh for third-person rendering.
+   * Uses the comical tourist 3D model with full animations.
    */
   public attachLocalAvatar(scene: THREE.Scene): THREE.Group {
+    if (this.localAvatarGroup) {
+      return this.localAvatarGroup;
+    }
+
     const group = new THREE.Group();
+    group.name = 'LocalPlayerAvatar';
 
-    // Stylized capsule body
-    const bodyGeo = new THREE.CylinderGeometry(0.32, 0.38, 0.9, 16);
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x1f2233,
-      roughness: 0.4,
-      metalness: 0.7,
-    });
-    const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-    bodyMesh.position.y = 0.85;
-    bodyMesh.castShadow = true;
-    group.add(bodyMesh);
+    const template = getTouristTemplate();
+    if (template) {
+      this.localTourist = createTouristAvatarInstance(template);
+      group.add(this.localTourist.root);
+    } else {
+      // Fallback stylized capsule body while GLTF loads
+      const bodyGeo = new THREE.CylinderGeometry(0.32, 0.38, 0.9, 16);
+      const bodyMat = new THREE.MeshStandardMaterial({
+        color: 0x1f2233,
+        roughness: 0.4,
+        metalness: 0.7,
+      });
+      const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+      bodyMesh.position.y = 0.85;
+      bodyMesh.castShadow = true;
+      group.add(bodyMesh);
+      this.placeholderLocalMeshes.push(bodyMesh);
 
-    // Neon accent belt
-    const beltGeo = new THREE.TorusGeometry(0.36, 0.03, 8, 24);
-    const beltMat = new THREE.MeshStandardMaterial({
-      color: 0x00ffcc,
-      emissive: 0x00ffcc,
-      emissiveIntensity: 0.8,
-    });
-    const belt = new THREE.Mesh(beltGeo, beltMat);
-    belt.rotation.x = Math.PI / 2;
-    belt.position.y = 0.8;
-    group.add(belt);
+      // Neon accent belt
+      const beltGeo = new THREE.TorusGeometry(0.36, 0.03, 8, 24);
+      const beltMat = new THREE.MeshStandardMaterial({
+        color: 0x00ffcc,
+        emissive: 0x00ffcc,
+        emissiveIntensity: 0.8,
+      });
+      const belt = new THREE.Mesh(beltGeo, beltMat);
+      belt.rotation.x = Math.PI / 2;
+      belt.position.y = 0.8;
+      group.add(belt);
+      this.placeholderLocalMeshes.push(belt);
 
-    // Head
-    const headGeo = new THREE.SphereGeometry(0.24, 16, 16);
-    const headMat = new THREE.MeshStandardMaterial({ color: 0x3a3f55, roughness: 0.5 });
-    const headMesh = new THREE.Mesh(headGeo, headMat);
-    headMesh.position.y = 1.45;
-    headMesh.castShadow = true;
-    group.add(headMesh);
+      // Head
+      const headGeo = new THREE.SphereGeometry(0.24, 16, 16);
+      const headMat = new THREE.MeshStandardMaterial({ color: 0x3a3f55, roughness: 0.5 });
+      const headMesh = new THREE.Mesh(headGeo, headMat);
+      headMesh.position.y = 1.45;
+      headMesh.castShadow = true;
+      group.add(headMesh);
+      this.placeholderLocalMeshes.push(headMesh);
 
-    // Cyan visor (facing -Z to match Three.js forward)
-    const visorGeo = new THREE.BoxGeometry(0.3, 0.1, 0.16);
-    const visorMat = new THREE.MeshStandardMaterial({
-      color: 0x00ffff,
-      emissive: 0x00ffff,
-      emissiveIntensity: 1.5,
-    });
-    const visorMesh = new THREE.Mesh(visorGeo, visorMat);
-    visorMesh.position.set(0, 1.46, -0.16);
-    group.add(visorMesh);
+      // Cyan visor (facing -Z to match Three.js forward)
+      const visorGeo = new THREE.BoxGeometry(0.3, 0.1, 0.16);
+      const visorMat = new THREE.MeshStandardMaterial({
+        color: 0x00ffff,
+        emissive: 0x00ffff,
+        emissiveIntensity: 1.5,
+      });
+      const visorMesh = new THREE.Mesh(visorGeo, visorMat);
+      visorMesh.position.set(0, 1.46, -0.16);
+      group.add(visorMesh);
+      this.placeholderLocalMeshes.push(visorMesh);
+
+      // Async upgrade to comical tourist once loaded
+      void loadTouristTemplate().then((gltf) => {
+        if (!gltf || !this.localAvatarGroup) return;
+
+        // Clean up fallback meshes
+        for (const m of this.placeholderLocalMeshes) {
+          group.remove(m);
+          if (m instanceof THREE.Mesh) {
+            m.geometry?.dispose();
+            if (Array.isArray(m.material)) m.material.forEach((mat) => mat.dispose());
+            else if (m.material) m.material.dispose();
+          }
+        }
+        this.placeholderLocalMeshes = [];
+
+        this.localTourist = createTouristAvatarInstance(gltf);
+        group.add(this.localTourist.root);
+      });
+    }
 
     group.visible = this.isThirdPerson;
     scene.add(group);
     this.localAvatarGroup = group;
     return group;
+  }
+
+  /**
+   * Triggers a one-shot emote animation on local avatar (Wave, Angry, FallBack).
+   */
+  public playEmote(name: string): boolean {
+    if (!this.localTourist) return false;
+    this.localTourist.playAction(name);
+    return true;
   }
 
   /**
@@ -244,6 +296,15 @@ export class PlayerController {
     // Toggle perspective with 'KeyV'
     if (event.code === 'KeyV') {
       this.setThirdPerson(!this.isThirdPerson);
+    }
+
+    // Emotes
+    if (event.code === 'KeyH') {
+      this.playEmote('Wave');
+    } else if (event.code === 'KeyJ') {
+      this.playEmote('Angry');
+    } else if (event.code === 'KeyK') {
+      this.playEmote('FallBack');
     }
   };
 
@@ -522,6 +583,21 @@ export class PlayerController {
       // First person: position camera at eye height
       this.camera.position.set(this.position.x, this.position.y + this.config.eyeHeight, this.position.z);
     }
+
+    // 7. Update local comical tourist animations
+    if (this.localTourist) {
+      const isMoving = inputDir.lengthSq() > 0.01;
+      if (!this.localTourist.isActionLocked) {
+        if (!this.isGrounded) {
+          this.localTourist.playClip('Jump', 0.1);
+        } else if (isMoving) {
+          this.localTourist.playClip(isSprinting ? 'Run' : 'Walk', 0.2);
+        } else {
+          this.localTourist.playClip('Idle', 0.25);
+        }
+      }
+      this.localTourist.update(delta);
+    }
   }
 
   /**
@@ -577,6 +653,11 @@ export class PlayerController {
     document.removeEventListener('mousemove', this.onMouseMove);
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
+
+    if (this.localTourist) {
+      this.localTourist.dispose();
+      this.localTourist = null;
+    }
 
     if (this.localAvatarGroup && this.localAvatarGroup.parent) {
       this.localAvatarGroup.parent.remove(this.localAvatarGroup);

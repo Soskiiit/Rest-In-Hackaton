@@ -320,6 +320,7 @@ class Application {
 
     // 2. Initialize Player Controller (WASD + Mouse Look)
     this.playerController = new PlayerController(this.world.getCamera(), document.body);
+    this.playerController.attachLocalAvatar(this.world.getScene());
 
     // 3. Initialize Remote Players Avatar Manager
     this.otherPlayerManager = new OtherPlayerManager(this.world.getScene());
