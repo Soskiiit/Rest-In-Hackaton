@@ -1,0 +1,45 @@
+{
+  "file": "vendor_yellow.glb",
+  "bytes": 80160,
+  "triangles": 1108,
+  "nodes": 51,
+  "animations": [
+    "Idle",
+    "Wave",
+    "Angry",
+    "Walk"
+  ],
+  "units": "meters",
+  "up": "+Y",
+  "forward": "+Z",
+  "origin": "between feet at ground",
+  "rig": "rigid articulated nodes; no skinning",
+  "root_motion": false,
+  "clips": {
+    "Idle": {
+      "duration": 3.2,
+      "loop": true
+    },
+    "Wave": {
+      "duration": 2.2,
+      "loop": false
+    },
+    "Angry": {
+      "duration": 1.8,
+      "loop": false
+    },
+    "Walk": {
+      "duration": 1,
+      "loop": true
+    }
+  },
+  "id": "vendor_yellow",
+  "label": "Жёлтый кругляш",
+  "mustache": "none",
+  "hair": "fringe",
+  "scale": [
+    1.08,
+    0.91,
+    1.04
+  ]
+}

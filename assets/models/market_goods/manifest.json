@@ -1,0 +1,623 @@
+{
+  "version": 1,
+  "units": "meters",
+  "up": "+Y",
+  "forward": "+Z",
+  "origin": "center of base",
+  "static": true,
+  "total_triangles": 4368,
+  "categories": {
+    "tableware": "Посуда",
+    "food": "Продукты",
+    "everyday": "Бытовые вещи"
+  },
+  "lexical_sources": [
+    "https://www.mdbg.net/chinese/dictionary?page=cedict",
+    "https://cdhk.tongji.edu.cn/_upload/article/files/cc/06/cd5446d74006a36b0e98ec552b3f/0ae245ea-31ce-4bde-accd-2808d96e6f0e.pdf"
+  ],
+  "models": [
+    {
+      "file": "teapot.glb",
+      "triangles": 304,
+      "materials": 4,
+      "bytes": 24368,
+      "dimensions_m": {
+        "x": 0.2743138438763306,
+        "y": 0.164,
+        "z": 0.15216904260722458
+      },
+      "bounds_m": {
+        "min": [
+          -0.1371569219381653,
+          0,
+          -0.07608452130361229
+        ],
+        "max": [
+          0.1371569219381653,
+          0.164,
+          0.07608452130361229
+        ]
+      },
+      "sha256": "dfd84ffe17267abd202f4d4269f49e398b82449af55da40b49298c9b908928cb",
+      "id": "teapot",
+      "category": "tableware",
+      "word_id": "word_teapot",
+      "zh": "茶壶",
+      "py": "cháhú",
+      "ru": "Чайник"
+    },
+    {
+      "file": "cup.glb",
+      "triangles": 244,
+      "materials": 2,
+      "bytes": 18896,
+      "dimensions_m": {
+        "x": 0.1165,
+        "y": 0.06,
+        "z": 0.08274191691767836
+      },
+      "bounds_m": {
+        "min": [
+          -0.05825,
+          0,
+          -0.04137095845883918
+        ],
+        "max": [
+          0.05825,
+          0.06,
+          0.04137095845883918
+        ]
+      },
+      "sha256": "d1a6a421e404d35e68e4c65f2b494892881b61b3405994ac86334feaa3bdb602",
+      "id": "cup",
+      "category": "tableware",
+      "word_id": "word_cup",
+      "zh": "茶杯",
+      "py": "chábēi",
+      "ru": "Чайная чашка"
+    },
+    {
+      "file": "bowl.glb",
+      "triangles": 120,
+      "materials": 1,
+      "bytes": 9432,
+      "dimensions_m": {
+        "x": 0.2,
+        "y": 0.085,
+        "z": 0.19021130325903074
+      },
+      "bounds_m": {
+        "min": [
+          -0.1,
+          0,
+          -0.09510565162951537
+        ],
+        "max": [
+          0.1,
+          0.085,
+          0.09510565162951537
+        ]
+      },
+      "sha256": "bf2a50cbbd61ca5d08473a6546db4b54a9dc346506cd06cf48ca9b98e706a31e",
+      "id": "bowl",
+      "category": "tableware",
+      "word_id": "word_bowl",
+      "zh": "碗",
+      "py": "wǎn",
+      "ru": "Миска"
+    },
+    {
+      "file": "chopsticks.glb",
+      "triangles": 120,
+      "materials": 2,
+      "bytes": 10064,
+      "dimensions_m": {
+        "x": 0.0439982644538249,
+        "y": 0.008313843876330614,
+        "z": 0.2401437124191007
+      },
+      "bounds_m": {
+        "min": [
+          -0.02199913222691245,
+          0,
+          -0.12007185620955035
+        ],
+        "max": [
+          0.02199913222691245,
+          0.008313843876330614,
+          0.12007185620955035
+        ]
+      },
+      "sha256": "aa0fc5d80c15a23429a6fa5ebef3b694dd610eba4b0a5bf574fc926b69fd91b9",
+      "id": "chopsticks",
+      "category": "tableware",
+      "word_id": "word_chopsticks",
+      "zh": "筷子",
+      "py": "kuàizi",
+      "ru": "Палочки для еды"
+    },
+    {
+      "file": "spoon.glb",
+      "triangles": 136,
+      "materials": 2,
+      "bytes": 11128,
+      "dimensions_m": {
+        "x": 0.04,
+        "y": 0.013,
+        "z": 0.1715316954888546
+      },
+      "bounds_m": {
+        "min": [
+          -0.02,
+          0,
+          -0.0857658477444273
+        ],
+        "max": [
+          0.02,
+          0.013,
+          0.0857658477444273
+        ]
+      },
+      "sha256": "3c163825c566346d7b31594d887f23b86022b3a5396c5a2a0c5a427494cf7f0d",
+      "id": "spoon",
+      "category": "tableware",
+      "word_id": "word_spoon",
+      "zh": "勺子",
+      "py": "sháozi",
+      "ru": "Ложка"
+    },
+    {
+      "file": "tea.glb",
+      "triangles": 168,
+      "materials": 4,
+      "bytes": 14572,
+      "dimensions_m": {
+        "x": 0.126,
+        "y": 0.11972530933724977,
+        "z": 0.10054953484057165
+      },
+      "bounds_m": {
+        "min": [
+          -0.063,
+          0,
+          -0.050274767420285825
+        ],
+        "max": [
+          0.063,
+          0.11972530933724977,
+          0.050274767420285825
+        ]
+      },
+      "sha256": "901ada9b6535468019eb825cb5eef51263150e8733cf948cfff2eaeb9789c8aa",
+      "id": "tea",
+      "category": "food",
+      "word_id": "word_tea",
+      "zh": "茶叶",
+      "py": "cháyè",
+      "ru": "Чайные листья",
+      "note_ru": "Изучаем сухие чайные листья в открытой упаковке, не напиток."
+    },
+    {
+      "file": "rice.glb",
+      "triangles": 648,
+      "materials": 3,
+      "bytes": 48540,
+      "dimensions_m": {
+        "x": 0.24,
+        "y": 0.058,
+        "z": 0.24
+      },
+      "bounds_m": {
+        "min": [
+          -0.12,
+          0,
+          -0.12
+        ],
+        "max": [
+          0.12,
+          0.058,
+          0.12
+        ]
+      },
+      "sha256": "78de42b2447faae4d42640039abb2a4d4357bae875ca996bbc5a2fbe16415cd6",
+      "id": "rice",
+      "category": "food",
+      "word_id": "word_rice",
+      "zh": "米饭",
+      "py": "mǐfàn",
+      "ru": "Варёный рис",
+      "note_ru": "Изучаем приготовленный рис в тарелке, не сырое зерно."
+    },
+    {
+      "file": "noodles.glb",
+      "triangles": 588,
+      "materials": 4,
+      "bytes": 44744,
+      "dimensions_m": {
+        "x": 0.21,
+        "y": 0.096,
+        "z": 0.19972186842198225
+      },
+      "bounds_m": {
+        "min": [
+          -0.105,
+          0,
+          -0.09986093421099113
+        ],
+        "max": [
+          0.105,
+          0.096,
+          0.09986093421099113
+        ]
+      },
+      "sha256": "e1873b09fd0d3ecb25d303b196784e575645745b44d33c42ab9c84e315532272",
+      "id": "noodles",
+      "category": "food",
+      "word_id": "word_noodles",
+      "zh": "面条",
+      "py": "miàntiáo",
+      "ru": "Лапша",
+      "note_ru": "Изучаем лапшу; миска служит только для подачи."
+    },
+    {
+      "file": "baozi.glb",
+      "triangles": 228,
+      "materials": 2,
+      "bytes": 17756,
+      "dimensions_m": {
+        "x": 0.134,
+        "y": 0.11174261065723251,
+        "z": 0.134
+      },
+      "bounds_m": {
+        "min": [
+          -0.067,
+          0,
+          -0.067
+        ],
+        "max": [
+          0.067,
+          0.11174261065723251,
+          0.067
+        ]
+      },
+      "sha256": "783eabfdf19249e746a828b35290585547192474c335d71c0425b39de014db91",
+      "id": "baozi",
+      "category": "food",
+      "word_id": "word_baozi",
+      "zh": "包子",
+      "py": "bāozi",
+      "ru": "Баоцзы — булочка с начинкой"
+    },
+    {
+      "file": "egg.glb",
+      "triangles": 80,
+      "materials": 1,
+      "bytes": 6556,
+      "dimensions_m": {
+        "x": 0.046,
+        "y": 0.062,
+        "z": 0.043748599749577066
+      },
+      "bounds_m": {
+        "min": [
+          -0.023,
+          0,
+          -0.021874299874788533
+        ],
+        "max": [
+          0.023,
+          0.062,
+          0.021874299874788533
+        ]
+      },
+      "sha256": "3d5d8c0e81fadde886fd1feb00ec654b76a1ac9312a7c9298a3461c7e4e14fd3",
+      "id": "egg",
+      "category": "food",
+      "word_id": "word_egg",
+      "zh": "鸡蛋",
+      "py": "jīdàn",
+      "ru": "Куриное яйцо"
+    },
+    {
+      "file": "apple.glb",
+      "triangles": 132,
+      "materials": 3,
+      "bytes": 11408,
+      "dimensions_m": {
+        "x": 0.094,
+        "y": 0.09448989794855664,
+        "z": 0.08939931253174445
+      },
+      "bounds_m": {
+        "min": [
+          -0.047,
+          0,
+          -0.044699656265872224
+        ],
+        "max": [
+          0.047,
+          0.09448989794855664,
+          0.044699656265872224
+        ]
+      },
+      "sha256": "ec26b28fdded1d9f4cf22ffe6879e4a3a134d57773593c29899f4f1a6e07ea3d",
+      "id": "apple",
+      "category": "food",
+      "word_id": "word_apple",
+      "zh": "苹果",
+      "py": "píngguǒ",
+      "ru": "Яблоко"
+    },
+    {
+      "file": "banana.glb",
+      "triangles": 120,
+      "materials": 2,
+      "bytes": 9996,
+      "dimensions_m": {
+        "x": 0.18130540159479652,
+        "y": 0.07865262066165798,
+        "z": 0.038
+      },
+      "bounds_m": {
+        "min": [
+          -0.09065270079739826,
+          0,
+          -0.019
+        ],
+        "max": [
+          0.09065270079739826,
+          0.07865262066165798,
+          0.019
+        ]
+      },
+      "sha256": "399ed800aa4b0173d0cb23d202e4e81bf855e62598fd06f17ef2e36659c1ebdb",
+      "id": "banana",
+      "category": "food",
+      "word_id": "word_banana",
+      "zh": "香蕉",
+      "py": "xiāngjiāo",
+      "ru": "Банан"
+    },
+    {
+      "file": "cucumber.glb",
+      "triangles": 144,
+      "materials": 2,
+      "bytes": 11772,
+      "dimensions_m": {
+        "x": 0.05372519699069686,
+        "y": 0.052000000000000005,
+        "z": 0.2195050605097797
+      },
+      "bounds_m": {
+        "min": [
+          -0.02686259849534843,
+          0,
+          -0.10975253025488985
+        ],
+        "max": [
+          0.02686259849534843,
+          0.052000000000000005,
+          0.10975253025488985
+        ]
+      },
+      "sha256": "b134b7261adade054ea4ca331471e1f0aca3e6f92444c4302d0528c478116ac8",
+      "id": "cucumber",
+      "category": "food",
+      "word_id": "word_cucumber",
+      "zh": "黄瓜",
+      "py": "huángguā",
+      "ru": "Огурец"
+    },
+    {
+      "file": "tomato.glb",
+      "triangles": 144,
+      "materials": 2,
+      "bytes": 11708,
+      "dimensions_m": {
+        "x": 0.104,
+        "y": 0.08264500987267565,
+        "z": 0.09890987769469597
+      },
+      "bounds_m": {
+        "min": [
+          -0.052,
+          0,
+          -0.04945493884734799
+        ],
+        "max": [
+          0.052,
+          0.08264500987267565,
+          0.04945493884734799
+        ]
+      },
+      "sha256": "687b50ef07e645e58490f2aa914fb9f43c5d8fe1adcb4995817019b5f8288f51",
+      "id": "tomato",
+      "category": "food",
+      "word_id": "word_tomato",
+      "zh": "西红柿",
+      "py": "xīhóngshì",
+      "ru": "Помидор"
+    },
+    {
+      "file": "carrot.glb",
+      "triangles": 100,
+      "materials": 3,
+      "bytes": 9124,
+      "dimensions_m": {
+        "x": 0.08953106463250436,
+        "y": 0.05896550401029953,
+        "z": 0.27
+      },
+      "bounds_m": {
+        "min": [
+          -0.04476553231625218,
+          0,
+          -0.135
+        ],
+        "max": [
+          0.04476553231625218,
+          0.05896550401029953,
+          0.135
+        ]
+      },
+      "sha256": "e4fcb25c1195365a7aee4619cb4fc8b4c8d758502555b0fbe07a56596ef7039c",
+      "id": "carrot",
+      "category": "food",
+      "word_id": "word_carrot",
+      "zh": "胡萝卜",
+      "py": "húluóbo",
+      "ru": "Морковь"
+    },
+    {
+      "file": "bottle.glb",
+      "triangles": 160,
+      "materials": 3,
+      "bytes": 13344,
+      "dimensions_m": {
+        "x": 0.0744,
+        "y": 0.243,
+        "z": 0.07075860481235942
+      },
+      "bounds_m": {
+        "min": [
+          -0.0372,
+          0,
+          -0.03537930240617971
+        ],
+        "max": [
+          0.0372,
+          0.243,
+          0.03537930240617971
+        ]
+      },
+      "sha256": "fe4bf3878673d1d8a67d8e8901fffacafed7abcfad1d7d2f64afde998c118c64",
+      "id": "bottle",
+      "category": "everyday",
+      "word_id": "word_bottle",
+      "zh": "瓶子",
+      "py": "píngzi",
+      "ru": "Бутылка"
+    },
+    {
+      "file": "umbrella.glb",
+      "triangles": 308,
+      "materials": 4,
+      "bytes": 24548,
+      "dimensions_m": {
+        "x": 0.9238637033051563,
+        "y": 0.9659540227449679,
+        "z": 0.9238637033051563
+      },
+      "bounds_m": {
+        "min": [
+          -0.46193185165257816,
+          0,
+          -0.46193185165257816
+        ],
+        "max": [
+          0.46193185165257816,
+          0.9659540227449679,
+          0.46193185165257816
+        ]
+      },
+      "sha256": "afc0a442ee9b08431690c2883a57f41cd11177d72e67c0dea96460a345eceb0b",
+      "id": "umbrella",
+      "category": "everyday",
+      "word_id": "word_umbrella",
+      "zh": "雨伞",
+      "py": "yǔsǎn",
+      "ru": "Зонт"
+    },
+    {
+      "file": "backpack.glb",
+      "triangles": 184,
+      "materials": 4,
+      "bytes": 15604,
+      "dimensions_m": {
+        "x": 0.3,
+        "y": 0.3876795365028676,
+        "z": 0.2625477128372864
+      },
+      "bounds_m": {
+        "min": [
+          -0.15,
+          0,
+          -0.1312738564186432
+        ],
+        "max": [
+          0.15,
+          0.3876795365028676,
+          0.1312738564186432
+        ]
+      },
+      "sha256": "3a961e8d83c90b2b2957f690e02200cb180dab00d8908814954af7b7939c172e",
+      "id": "backpack",
+      "category": "everyday",
+      "word_id": "word_backpack",
+      "zh": "书包",
+      "py": "shūbāo",
+      "ru": "Рюкзак"
+    },
+    {
+      "file": "hat.glb",
+      "triangles": 144,
+      "materials": 2,
+      "bytes": 11612,
+      "dimensions_m": {
+        "x": 0.48,
+        "y": 0.14,
+        "z": 0.48
+      },
+      "bounds_m": {
+        "min": [
+          -0.24,
+          0,
+          -0.24
+        ],
+        "max": [
+          0.24,
+          0.14,
+          0.24
+        ]
+      },
+      "sha256": "29d5c291dc8312f78c02ebd92508602d15643f16a975677bde1bd25888c538a6",
+      "id": "hat",
+      "category": "everyday",
+      "word_id": "word_hat",
+      "zh": "帽子",
+      "py": "màozi",
+      "ru": "Шляпа"
+    },
+    {
+      "file": "shoes.glb",
+      "triangles": 296,
+      "materials": 3,
+      "bytes": 23100,
+      "dimensions_m": {
+        "x": 0.258,
+        "y": 0.08700000000000001,
+        "z": 0.2478
+      },
+      "bounds_m": {
+        "min": [
+          -0.129,
+          0,
+          -0.1239
+        ],
+        "max": [
+          0.129,
+          0.08700000000000001,
+          0.1239
+        ]
+      },
+      "sha256": "270ca910249bd8ef90af98144f265a49b3e760bfe36fb4adfc5d2d0f9fa9ef41",
+      "id": "shoes",
+      "category": "everyday",
+      "word_id": "word_shoes",
+      "zh": "鞋子",
+      "py": "xiézi",
+      "ru": "Обувь — пара туфель"
+    }
+  ]
+}

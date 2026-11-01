@@ -1,0 +1,45 @@
+{
+  "file": "vendor_vest.glb",
+  "bytes": 84232,
+  "triangles": 1156,
+  "nodes": 53,
+  "animations": [
+    "Idle",
+    "Wave",
+    "Angry",
+    "Walk"
+  ],
+  "units": "meters",
+  "up": "+Y",
+  "forward": "+Z",
+  "origin": "between feet at ground",
+  "rig": "rigid articulated nodes; no skinning",
+  "root_motion": false,
+  "clips": {
+    "Idle": {
+      "duration": 3.2,
+      "loop": true
+    },
+    "Wave": {
+      "duration": 2.2,
+      "loop": false
+    },
+    "Angry": {
+      "duration": 1.8,
+      "loop": false
+    },
+    "Walk": {
+      "duration": 1,
+      "loop": true
+    }
+  },
+  "id": "vendor_vest",
+  "label": "Седой в жилете",
+  "mustache": "none",
+  "hair": "grey",
+  "scale": [
+    1.02,
+    0.97,
+    1.02
+  ]
+}
