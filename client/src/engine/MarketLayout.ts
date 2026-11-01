@@ -164,68 +164,68 @@ export class MarketLayout {
     const wallH = 8.5;
     return [
       // =======================================================================
-      // 1. SOUTH ENTRANCE AVENUE WALLS (Behind the stalls at X=96.0 & X=104.0)
-      // Left (West) wall at X=93.5, Z from 60 to 93.5
-      { x: 93.5, z: 76.75, width: 3.0, depth: 33.5, height: wallH },
-      // Right (East) wall at X=106.5, Z from 60 to 93.5
-      { x: 106.5, z: 76.75, width: 3.0, depth: 33.5, height: wallH },
+      // 1. SOUTH ENTRANCE AVENUE WALLS (Behind stalls at X=96.0 & X=104.0)
+      // Left (West) wall at X=93.5, Z from 61.5 to 92.0
+      { x: 93.5, z: 76.75, width: 3.0, depth: 30.5, height: wallH },
+      // Right (East) wall at X=106.5, Z from 61.5 to 92.0
+      { x: 106.5, z: 76.75, width: 3.0, depth: 30.5, height: wallH },
 
       // =======================================================================
       // 2. WEST CORRIDOR & WEST PLAZA INTERIOR WALLS
-      // South corridor wall behind stalls: Z=106.5, X from 71.0 to 93.5
-      { x: 82.25, z: 106.5, width: 22.5, depth: 3.0, height: wallH },
+      // South corridor wall behind stalls: Z=106.5, X from 71.0 to 92.0
+      { x: 81.5, z: 106.5, width: 21.0, depth: 3.0, height: wallH },
       // North corridor wall behind stalls: Z=93.5, X from 71.0 to 79.5
       { x: 75.25, z: 93.5, width: 8.5, depth: 3.0, height: wallH },
 
       // West Plaza interior walls behind perimeter stalls (at X=50, Z=90, Z=110):
-      // South wall of West Plaza (Z=112.5, X from 47.5 to 71.0)
-      { x: 59.25, z: 112.5, width: 23.5, depth: 3.0, height: wallH },
-      // North wall of West Plaza (Z=87.5, X from 47.5 to 71.0)
-      { x: 59.25, z: 87.5, width: 23.5, depth: 3.0, height: wallH },
+      // South wall of West Plaza (Z=112.5, X from 49.0 to 71.0)
+      { x: 60.0, z: 112.5, width: 22.0, depth: 3.0, height: wallH },
+      // North wall of West Plaza (Z=87.5, X from 49.0 to 71.0)
+      { x: 60.0, z: 87.5, width: 22.0, depth: 3.0, height: wallH },
 
       // =======================================================================
       // 3. EAST CORRIDOR & EAST PLAZA INTERIOR WALLS
-      // South corridor wall behind stalls: Z=106.5, X from 106.5 to 129.0
-      { x: 117.75, z: 106.5, width: 22.5, depth: 3.0, height: wallH },
+      // South corridor wall behind stalls: Z=106.5, X from 108.0 to 129.0
+      { x: 118.5, z: 106.5, width: 21.0, depth: 3.0, height: wallH },
       // North corridor wall behind stalls: Z=93.5, X from 120.5 to 129.0
       { x: 124.75, z: 93.5, width: 8.5, depth: 3.0, height: wallH },
 
       // East Plaza interior walls behind perimeter stalls (at X=150, Z=90, Z=110):
-      // South wall of East Plaza (Z=112.5, X from 129.0 to 152.5)
-      { x: 140.75, z: 112.5, width: 23.5, depth: 3.0, height: wallH },
-      // North wall of East Plaza (Z=87.5, X from 129.0 to 152.5)
-      { x: 140.75, z: 87.5, width: 23.5, depth: 3.0, height: wallH },
+      // South wall of East Plaza (Z=112.5, X from 129.0 to 151.0)
+      { x: 140.0, z: 112.5, width: 22.0, depth: 3.0, height: wallH },
+      // North wall of East Plaza (Z=87.5, X from 129.0 to 151.0)
+      { x: 140.0, z: 87.5, width: 22.0, depth: 3.0, height: wallH },
 
       // =======================================================================
-      // 4. LARGE NORTH PLAZA WALLS (Behind stalls at X=82.0, X=118.0, Z=144.0)
-      // West Plaza interior wall: X=79.5, Z from 93.5 to 146.5 (length: 53.0m)
-      { x: 79.5, z: 120.0, width: 3.0, depth: 53.0, height: wallH },
-      // East Plaza interior wall: X=120.5, Z from 93.5 to 146.5 (length: 53.0m)
-      { x: 120.5, z: 120.0, width: 3.0, depth: 53.0, height: wallH },
+      // 4. LARGE NORTH PLAZA WALLS (Behind stalls at X=82.0, X=118.0)
+      // West Plaza interior wall: X=79.5, Z from 108.0 to 145.0 (depth: 37.0m)
+      { x: 79.5, z: 126.5, width: 3.0, depth: 37.0, height: wallH },
+      // East Plaza interior wall: X=120.5, Z from 108.0 to 145.0 (depth: 37.0m)
+      { x: 120.5, z: 126.5, width: 3.0, depth: 37.0, height: wallH },
 
       // =======================================================================
-      // 5. EXTERNAL BUILDING WALLS (The Yellow Outer Enclosing Rectangles)
-      // Forming the outer boundary of the market building blocks!
+      // 5. EXTERNAL BUILDING WALLS (The Outer Enclosing Perimeter)
+      // Clean, seamless abutments without any overlapping geometries:
 
       // TOP NORTH OUTER WALL (Behind North Plaza stalls at Z=144 -> wall at Z=146.5)
-      // Spans across the entire top from X=47.5 to X=152.5 (width: 108m)
-      { x: 100.0, z: 146.5, width: 108.0, depth: 3.0, height: wallH },
+      // Spans from West Outer (X=49.0) to East Outer (X=151.0) (width: 102m)
+      { x: 100.0, z: 146.5, width: 102.0, depth: 3.0, height: wallH },
 
       // WEST OUTER WALL (Behind West Plaza stalls at X=50 -> wall at X=47.5)
-      // Spans from Z=60.0 to Z=146.5 (depth: 89.5m)
+      // Spans from Z=58.5 to Z=148.0 (depth: 89.5m)
       { x: 47.5, z: 103.25, width: 3.0, depth: 89.5, height: wallH },
 
       // EAST OUTER WALL (Behind East Plaza stalls at X=150 -> wall at X=152.5)
-      // Spans from Z=60.0 to Z=146.5 (depth: 89.5m)
+      // Spans from Z=58.5 to Z=148.0 (depth: 89.5m)
       { x: 152.5, z: 103.25, width: 3.0, depth: 89.5, height: wallH },
 
       // BOTTOM SOUTH-WEST WALL (At entrance line Z=60.0)
-      // Spans from West Outer Wall (X=47.5) to South Avenue (X=93.5) (width: 49m)
-      { x: 70.5, z: 60.0, width: 49.0, depth: 3.0, height: wallH },
+      // Spans from West Outer (X=49.0) to South Avenue (X=95.0) (width: 46m)
+      { x: 72.0, z: 60.0, width: 46.0, depth: 3.0, height: wallH },
 
       // BOTTOM SOUTH-EAST WALL (At entrance line Z=60.0)
-      // Spans from South Avenue (X=106.5) to East Outer Wall (X=152.5) (width: 49m)
-      { x: 129.5, z: 60.0, width: 49.0, depth: 3.0, height: wallH },
+      // Spans from South Avenue (X=105.0) to East Outer (X=151.0) (width: 46m)
+      { x: 128.0, z: 60.0, width: 46.0, depth: 3.0, height: wallH },
     ];
   }
 
