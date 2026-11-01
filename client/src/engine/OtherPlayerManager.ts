@@ -2,12 +2,14 @@ import * as THREE from 'three';
 
 /**
  * Payload interface for remote player movement updates.
+ * `login` comes with PLAYER_JOIN; PLAYER_MOVE carries only the transform.
  */
 export interface PlayerMovePayload {
   player_id: number;
   x: number;
   z: number;
   rotation: number; // yaw angle in radians
+  login?: string;
 }
 
 /**
@@ -21,6 +23,8 @@ interface RemotePlayerState {
   currentRotation: number;
   targetRotation: number;
   nameSprite: THREE.Sprite;
+  name: string;
+  accentHex: string;
   lastUpdated: number;
 }
 
@@ -30,13 +34,15 @@ interface RemotePlayerState {
 export interface OtherPlayerManagerConfig {
   lerpSpeed: number; // interpolation speed factor
   teleportDistanceThreshold: number; // distance after which avatar snaps instead of lerping
-  staleTimeoutMs: number; // prune remote players after inactivity (ms)
+  staleTimeoutMs: number; // prune remote players after inactivity (ms); Infinity = only PLAYER_LEAVE removes
 }
 
 export const DEFAULT_OTHER_PLAYER_CONFIG: OtherPlayerManagerConfig = {
   lerpSpeed: 12.0,
   teleportDistanceThreshold: 8.0,
-  staleTimeoutMs: 60000,
+  // The server sends PLAYER_MOVE only while a player moves and PLAYER_LEAVE when they go away,
+  // so a player standing still must not be pruned.
+  staleTimeoutMs: Infinity,
 };
 
 // Cyberpunk neon accent palette for distinct remote players
@@ -49,9 +55,14 @@ const ACCENT_PALETTE: number[] = [
   0x00ff66, // Acid Green
 ];
 
+/** Placeholder avatar: a coloured stick with a small "nose" showing where the player looks. */
+const STICK_SIZE = { width: 0.35, height: 1.7 };
+const NAME_HEIGHT = 2.05;
+const NAME_PENDING = '…';
+
 /**
- * OtherPlayerManager: Manages 3D avatars for remote players,
- * handles PLAYER_MOVE packet updates, applies smooth position/rotation lerping,
+ * OtherPlayerManager: Manages placeholder avatars and nickname badges for remote players,
+ * handles PLAYER_JOIN / PLAYER_MOVE updates, applies smooth position/rotation lerping,
  * and guarantees thorough GPU resource disposal.
  */
 export class OtherPlayerManager {
@@ -65,16 +76,16 @@ export class OtherPlayerManager {
   }
 
   /**
-   * Handles incoming PLAYER_MOVE packet from server or mock engine.
+   * Handles incoming PLAYER_JOIN / PLAYER_MOVE packet from server or mock engine.
    * Spawns new avatar if player_id is unknown, otherwise updates target position & rotation.
    */
   public updatePlayer(payload: PlayerMovePayload): void {
-    const { player_id, x, z, rotation } = payload;
+    const { player_id, x, z, rotation, login } = payload;
     let player = this.players.get(player_id);
 
     if (!player) {
       // Spawn new remote player avatar
-      player = this.createPlayerAvatar(player_id, x, z, rotation);
+      player = this.createPlayerAvatar(player_id, x, z, rotation, login);
       this.players.set(player_id, player);
       this.scene.add(player.group);
     } else {
@@ -82,6 +93,9 @@ export class OtherPlayerManager {
       player.targetPosition.set(x, 0, z);
       player.targetRotation = rotation;
       player.lastUpdated = performance.now();
+      if (login) {
+        this.setPlayerName(player_id, login);
+      }
 
       // If distant jump (e.g. teleport/respawn), snap immediately without lerping
       if (player.currentPosition.distanceTo(player.targetPosition) > this.config.teleportDistanceThreshold) {
@@ -94,69 +108,57 @@ export class OtherPlayerManager {
   }
 
   /**
-   * Builds stylized 3D avatar mesh group for a remote player.
+   * Sets the nickname shown above a remote player's head.
    */
-  private createPlayerAvatar(id: number, x: number, z: number, rotation: number): RemotePlayerState {
+  public setPlayerName(playerId: number, login: string): void {
+    const player = this.players.get(playerId);
+    if (!player || player.name === login) return;
+    player.name = login;
+    this.drawNameBadge(player.nameSprite, login, player.accentHex);
+  }
+
+  /**
+   * Returns the nickname currently shown above a remote player's head.
+   */
+  public getPlayerName(playerId: number): string | undefined {
+    return this.players.get(playerId)?.name;
+  }
+
+  /**
+   * Builds the placeholder avatar for a remote player: a stick plus a nose, and a nickname badge.
+   */
+  private createPlayerAvatar(id: number, x: number, z: number, rotation: number, login?: string): RemotePlayerState {
     const group = new THREE.Group();
     group.position.set(x, 0, z);
     group.rotation.y = rotation;
+    group.name = `RemotePlayer_${id}`;
 
     // Pick unique accent color from palette based on player ID
     const accentColor = ACCENT_PALETTE[Math.abs(id) % ACCENT_PALETTE.length];
     const accentHex = '#' + accentColor.toString(16).padStart(6, '0');
 
-    // 1. Torso / Body (Dark cyberpunk jacket / robe)
-    const bodyGeo = new THREE.CylinderGeometry(0.32, 0.38, 0.9, 16);
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x1f2233,
-      roughness: 0.45,
-      metalness: 0.6,
-    });
-    const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-    bodyMesh.position.y = 0.85;
-    bodyMesh.castShadow = true;
-    bodyMesh.receiveShadow = true;
-    group.add(bodyMesh);
+    // 1. Stick body
+    const stick = new THREE.Mesh(
+      new THREE.BoxGeometry(STICK_SIZE.width, STICK_SIZE.height, STICK_SIZE.width),
+      new THREE.MeshStandardMaterial({ color: accentColor, emissive: accentColor, emissiveIntensity: 0.25, roughness: 0.6 })
+    );
+    stick.position.y = STICK_SIZE.height / 2;
+    stick.castShadow = true;
+    stick.receiveShadow = true;
+    group.add(stick);
 
-    // 2. Neon trim ring around torso
-    const trimGeo = new THREE.TorusGeometry(0.36, 0.03, 8, 24);
-    const trimMat = new THREE.MeshStandardMaterial({
-      color: accentColor,
-      emissive: accentColor,
-      emissiveIntensity: 0.9,
-    });
-    const trimMesh = new THREE.Mesh(trimGeo, trimMat);
-    trimMesh.rotation.x = Math.PI / 2;
-    trimMesh.position.y = 0.8;
-    group.add(trimMesh);
+    // 2. Nose on the -Z side (Three.js forward), so the facing direction is visible
+    const nose = new THREE.Mesh(
+      new THREE.BoxGeometry(0.14, 0.14, 0.2),
+      new THREE.MeshStandardMaterial({ color: 0x15171f, roughness: 0.5 })
+    );
+    nose.position.set(0, 1.45, -(STICK_SIZE.width / 2 + 0.08));
+    group.add(nose);
 
-    // 3. Head
-    const headGeo = new THREE.SphereGeometry(0.24, 16, 16);
-    const headMat = new THREE.MeshStandardMaterial({
-      color: 0x303445,
-      roughness: 0.5,
-      metalness: 0.2,
-    });
-    const headMesh = new THREE.Mesh(headGeo, headMat);
-    headMesh.position.y = 1.45;
-    headMesh.castShadow = true;
-    group.add(headMesh);
-
-    // 4. Glowing Cyberpunk Visor (placed on -Z facing Three.js forward direction)
-    const visorGeo = new THREE.BoxGeometry(0.3, 0.1, 0.16);
-    const visorMat = new THREE.MeshStandardMaterial({
-      color: accentColor,
-      emissive: accentColor,
-      emissiveIntensity: 1.6,
-      roughness: 0.2,
-    });
-    const visorMesh = new THREE.Mesh(visorGeo, visorMat);
-    visorMesh.position.set(0, 1.46, -0.16);
-    group.add(visorMesh);
-
-    // 5. Overhead floating Name Badge / Tag
-    const nameSprite = this.createNameBadge(`Player #${id}`, accentHex);
-    nameSprite.position.set(0, 1.95, 0);
+    // 3. Overhead nickname badge
+    const name = login || NAME_PENDING;
+    const nameSprite = this.createNameBadge(name, accentHex);
+    nameSprite.position.set(0, NAME_HEIGHT, 0);
     group.add(nameSprite);
 
     return {
@@ -167,60 +169,73 @@ export class OtherPlayerManager {
       currentRotation: rotation,
       targetRotation: rotation,
       nameSprite,
+      name,
+      accentHex,
       lastUpdated: performance.now(),
     };
   }
 
   /**
-   * Creates a billboarded Sprite rendering a cyberpunk nameplate.
+   * Creates a billboarded Sprite for the nickname; drawn on top of the scene so stalls never hide it.
    */
   private createNameBadge(text: string, accentHex: string): THREE.Sprite {
-    if (typeof document === 'undefined') {
-      const material = new THREE.SpriteMaterial({ transparent: true });
-      const sprite = new THREE.Sprite(material);
-      sprite.scale.set(1.8, 0.45, 1.0);
-      return sprite;
-    }
+    const material = new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false });
+    const sprite = new THREE.Sprite(material);
+    sprite.renderOrder = 999;
+    sprite.scale.set(1.8, 0.45, 1.0);
+    this.drawNameBadge(sprite, text, accentHex);
+    return sprite;
+  }
+
+  /**
+   * (Re)draws a highlighted nickname: dark plate, glowing outline and glowing text in the player's colour.
+   */
+  private drawNameBadge(sprite: THREE.Sprite, text: string, accentHex: string): void {
+    if (typeof document === 'undefined') return;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 64;
     const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    if (ctx) {
-      // Background translucent box
-      ctx.fillStyle = 'rgba(15, 18, 28, 0.85)';
-      if (typeof ctx.roundRect === 'function') {
-        ctx.roundRect(4, 4, 248, 56, 10);
-      } else {
-        ctx.rect(4, 4, 248, 56);
-      }
-      ctx.fill();
+    // The canvas is sized to the name, so the texture is never squeezed onto the sprite.
+    const font = 'bold 48px system-ui, sans-serif';
+    ctx.font = font;
+    const textWidth = Math.min(ctx.measureText(text).width, 460);
+    const margin = 14;
+    const plateWidth = textWidth + 48;
+    canvas.width = Math.ceil(plateWidth + margin * 2);
+    canvas.height = 112;
+    ctx.font = font; // resizing the canvas resets the context state
 
-      // Neon outline
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = accentHex;
-      ctx.stroke();
-
-      // Text label
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 22px monospace, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, 128, 33);
+    ctx.fillStyle = 'rgba(12, 14, 22, 0.82)';
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(margin, 14, plateWidth, 84, 22);
+    } else {
+      ctx.rect(margin, 14, plateWidth, 84);
     }
+    ctx.fill();
+
+    ctx.shadowColor = accentHex;
+    ctx.shadowBlur = 18;
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = accentHex;
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, canvas.width / 2, 58, plateWidth - 24);
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
-    const material = new THREE.SpriteMaterial({
-      map: texture,
-      transparent: true,
-      depthWrite: false,
-    });
-
-    const sprite = new THREE.Sprite(material);
-    sprite.scale.set(1.8, 0.45, 1.0);
-    return sprite;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    sprite.material.map?.dispose();
+    sprite.material.map = texture;
+    sprite.material.needsUpdate = true;
+    // 0.5 m tall badge; wider names get a proportionally wider badge.
+    const badgeHeight = 0.5;
+    sprite.scale.set((canvas.width / canvas.height) * badgeHeight, badgeHeight, 1);
   }
 
   /**

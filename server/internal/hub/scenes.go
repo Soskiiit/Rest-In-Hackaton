@@ -87,6 +87,9 @@ func (h *Hub) unindex(c *client) {
 }
 func (h *Hub) nearby(x, z, r float64) []*client {
 	out := []*client{}
+	if !game.Finite(x) || !game.Finite(z) {
+		return out // an NPC removed in the level editor has no position and no listeners
+	}
 	if h.cells == nil {
 		for _, c := range h.clients {
 			if game.Near(c.player.X, c.player.Z, x, z, r) {

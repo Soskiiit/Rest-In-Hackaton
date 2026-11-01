@@ -22,6 +22,7 @@ import { PlayerGhostBeacon } from '../src/editor/PlayerGhostBeacon';
 import { MockChunkStorage } from '../src/editor/ChunkStorage';
 import {
   validateChunkData,
+  createEmptyChunk,
 } from '../src/editor/ChunkPersistence';
 
 // ============================================================================
@@ -1082,7 +1083,7 @@ describe('Milestone M5: Level Editor Master Integration & Full Workflow', () => 
       expect(chunk11?.items.length).toBeGreaterThanOrEqual(1);
 
       // Toast feedback
-      expect(hud.toasts).toContain('✅ Изменения чанков сохранены на диск!');
+      expect(hud.toasts).toContain('✅ Изменения карты сохранены');
     });
 
     it('should autosave dirty chunks after edits settle', async () => {
@@ -1204,4 +1205,51 @@ describe('Milestone M5: Level Editor Master Integration & Full Workflow', () => 
       expect(count2).toBe(1);
     });
   });
+
+  // ==========================================================================
+  // Shared map: announcing saves and reloading chunks edited by other players
+  // ==========================================================================
+  describe('Shared Map Sync', () => {
+    const storedChunk = (id: string, types: string[]): RawChunkData => {
+      const chunk = createEmptyChunk(id);
+      types.forEach((type, i) => chunk.buildings.push({ type, x: 4 + i * 4, z: 6 }));
+      return chunk;
+    };
+
+    it('should announce chunk ids that reached the shared storage after saving', async () => {
+      editor.setMode(AppMode.EDITOR);
+      editor.spawnAsset('prop_crate', new THREE.Vector3(5, 0, 5));
+      const announced: string[][] = [];
+      editor.onChunksSaved((ids) => announced.push(ids));
+
+      await editor.saveAllDirtyChunks(true);
+
+      expect(announced).toEqual([['0_0']]);
+    });
+
+    it('should replace the objects of a chunk with the version another player saved', async () => {
+      storage.seedChunk(storedChunk('2_2', ['prop_barrel']));
+      expect(await editor.reloadChunks(['2_2'])).toBe(1);
+      const before = editor.getEntitiesByChunk('2_2');
+      expect(before.map((e) => e.assetId)).toEqual(['prop_barrel']);
+
+      storage.seedChunk(storedChunk('2_2', ['prop_crate', 'prop_tree']));
+      expect(await editor.reloadChunks(['2_2'])).toBe(1);
+
+      const after = editor.getEntitiesByChunk('2_2');
+      expect(after.map((e) => e.assetId).sort()).toEqual(['prop_crate', 'prop_tree']);
+      expect(before[0].rootObject.parent).toBeNull();
+      expect(after.every((e) => e.rootObject.parent === scene)).toBe(true);
+    });
+
+    it('should keep unsaved local edits when another player saves the same chunk', async () => {
+      editor.setMode(AppMode.EDITOR);
+      const mine = editor.spawnAsset('prop_crate', new THREE.Vector3(45, 0, 45));
+      storage.seedChunk(storedChunk('2_2', []));
+
+      expect(await editor.reloadChunks(['2_2'])).toBe(0);
+      expect(editor.getEntitiesByChunk('2_2')).toContain(mine);
+    });
+  });
+
 });

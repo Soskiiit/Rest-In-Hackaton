@@ -16,6 +16,7 @@ import {
   EditorSelectionManager,
   SelectableEntity,
   GizmoMode,
+  disposeHierarchy,
 } from './EditorSelectionManager';
 import { AssetCatalog } from './AssetCatalog';
 import { AssetCatalogUI } from './AssetCatalogUI';
@@ -31,6 +32,7 @@ import {
 import {
   IChunkStorage,
   CompositeChunkStorage,
+  ServerWorldStorage,
 } from './ChunkStorage';
 import type { PlayerController } from '../engine/PlayerController';
 import type { World } from '../engine/World';
@@ -69,7 +71,7 @@ export class LevelEditor {
   public readonly assetCatalog: AssetCatalog;
   public readonly catalogUI: AssetCatalogUI;
   public readonly inspector: PropertyInspector;
-  public readonly storage: IChunkStorage;
+  public storage: IChunkStorage;
 
   public ghostBeacon: PlayerGhostBeacon | null = null;
   public playerController: PlayerController | null = null;
@@ -85,6 +87,9 @@ export class LevelEditor {
   private saveAgainAfterCurrent: boolean = false;
   private changeVersion: number = 0;
   private readonly AUTO_SAVE_DELAY_MS: number = 1200;
+
+  // Shared map: notified with the chunk ids other players can now read
+  private readonly chunksSavedListeners: Set<(chunkIds: string[]) => void> = new Set();
 
   // Top Toolbar / HUD UI References
   private modeToggleBtn: HTMLElement | null = null;
@@ -819,10 +824,25 @@ export class LevelEditor {
 
       const savedCount = await this.storage.saveAllDirtyChunks(dirtyMap);
 
+      // Announce what other players can read; a local-only save stays invisible to them.
+      const sharedIds = this.storage.lastSharedChunkIds ?? (savedCount > 0 ? savedIds : []);
+      if (sharedIds.length > 0) {
+        for (const listener of this.chunksSavedListeners) {
+          try {
+            listener([...sharedIds]);
+          } catch (err) {
+            console.error('[LevelEditor] Error in chunksSaved listener:', err);
+          }
+        }
+      }
+      if (sharedIds.length < savedIds.length) {
+        this.showToast('⚠️ Часть правок сохранена только в этом браузере — другие игроки их не увидят', 5000);
+      }
+
       // Only clear the chunks if nothing changed during the async write.
       // Otherwise keep them dirty so the follow-up autosave persists the new state.
       if (this.changeVersion === versionAtStart) {
-        for (const id of savedIds) {
+        for (const id of sharedIds) {
           this.dirtyChunks.delete(id);
         }
         this.updateDirtyUI();
@@ -830,11 +850,26 @@ export class LevelEditor {
         this.saveAgainAfterCurrent = true;
       }
 
-      if (!silent) {
-        this.showToast('✅ Изменения чанков сохранены на диск!');
+      if (!silent && sharedIds.length === savedIds.length) {
+        this.showToast('✅ Изменения карты сохранены');
       }
 
       return savedCount;
+    } catch (err) {
+      const conflict = err instanceof Error && err.message === 'WORLD_CONFLICT';
+      this.showToast(conflict
+        ? '⚠️ Конфликт правок: карта изменилась у другого игрока. Ваши правки остались в редакторе.'
+        : '⚠️ Не удалось сохранить карту. Правки остались в редакторе.', 6000);
+      if (conflict && !silent && this.storage instanceof ServerWorldStorage &&
+          typeof window !== 'undefined' && window.confirm('Эти чанки изменил другой игрок. Перезаписать их своими правками?')) {
+        try {
+          await this.storage.refreshVersions(savedIds);
+          this.saveAgainAfterCurrent = true;
+        } catch {
+          this.showToast('⚠️ Не удалось получить актуальные версии карты.', 5000);
+        }
+      }
+      return 0;
     } finally {
       this.isSavingChunks = false;
       if (this.saveAgainAfterCurrent) {
@@ -849,6 +884,72 @@ export class LevelEditor {
    */
   public async save(): Promise<number> {
     return this.saveAllDirtyChunks();
+  }
+
+  /**
+   * Subscribes to saves that reached the shared storage; the listener receives the chunk ids.
+   */
+  public onChunksSaved(listener: (chunkIds: string[]) => void): () => void {
+    this.chunksSavedListeners.add(listener);
+    return () => {
+      this.chunksSavedListeners.delete(listener);
+    };
+  }
+
+  public hasUnsavedChunk(id: string): boolean { return this.dirtyChunks.has(id); }
+
+  public applyServerChunk(data: RawChunkData): boolean {
+    const id = data.chunk_id;
+    if (this.dirtyChunks.has(id)) return false;
+    for (const entity of this.getEntitiesByChunk(id)) {
+      if (this.selectionManager.getSelected() === entity) this.select(null);
+      this.unregisterEntity(entity);
+      entity.rootObject.removeFromParent();
+      disposeHierarchy(entity.rootObject);
+    }
+    this.reconstructEntitiesFromChunk(data);
+    return true;
+  }
+
+  public unloadServerChunk(id: string): void {
+    if (this.dirtyChunks.has(id)) return;
+    for (const entity of this.getEntitiesByChunk(id)) {
+      if (this.selectionManager.getSelected() === entity) this.select(null);
+      this.unregisterEntity(entity);
+      entity.rootObject.removeFromParent();
+      disposeHierarchy(entity.rootObject);
+    }
+  }
+
+  /**
+   * Replaces the objects of the given chunks with their stored version (another player edited them).
+   * A chunk with unsaved local edits is kept as is. Returns the number of chunks reloaded.
+   */
+  public async reloadChunks(chunkIds: string[]): Promise<number> {
+    let reloaded = 0;
+    for (const chunkId of chunkIds) {
+      if (this.dirtyChunks.has(chunkId)) {
+        this.showToast(`⚠️ Чанк ${chunkId} изменил другой игрок, но у вас есть несохранённые правки — оставлены ваши`, 5000);
+        continue;
+      }
+      const chunkData = await this.storage.loadChunk(chunkId);
+      if (this.dirtyChunks.has(chunkId)) {
+        continue; // edited locally while loading
+      }
+      for (const entity of this.getEntitiesByChunk(chunkId)) {
+        if (this.selectionManager.getSelected() === entity) {
+          this.select(null);
+        }
+        this.unregisterEntity(entity);
+        entity.rootObject.removeFromParent();
+        disposeHierarchy(entity.rootObject);
+      }
+      if (chunkData) {
+        this.reconstructEntitiesFromChunk(chunkData);
+      }
+      reloaded++;
+    }
+    return reloaded;
   }
 
   /**

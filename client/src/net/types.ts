@@ -24,6 +24,7 @@ export type PacketType =
   | 'PONG'
   | 'WELCOME'
   | 'PLAYER_JOIN'
+  | 'WORLD_EDIT'
   | 'CONNECTION_CLOSED';
 
 export interface Packet<T = any> {
@@ -139,9 +140,15 @@ export interface BalancePayload {
 
 export interface ChunkLoadPayload {
   chunk_id: string;
+  revision?: number;
+  buildings?: Array<{type: string; x: number; z: number}>;
+  signs?: Array<{text: string; x: number; y: number; z: number}>;
   objects?: any[];
   lanterns?: Array<{ x: number; y: number; z: number }>;
   npc_id?: string;
+  /** Coordinates are local to the chunk (0–20); add (xIndex*20, zIndex*20) for world space. */
+  npcs?: Array<{ npc_id: string; x: number; y: number; z: number }>;
+  items?: Array<{ item_id: string; x: number; y: number; z: number }>;
 }
 
 export interface ChunkUnloadPayload {
@@ -164,7 +171,7 @@ export interface WelcomePayload {
   world?: { total_chunks: number; total_bytes: number; chunk_size: number; max_percent: number };
 }
 
-/** Другой игрок появился в зоне видимости. */
+/** Другой игрок появился в зоне видимости. Баланс не приходит: кошелёк виден только владельцу. */
 export interface PlayerJoinPayload {
   id: number;
   login: string;
@@ -172,7 +179,16 @@ export interface PlayerJoinPayload {
   x: number;
   z: number;
   rotation: number;
-  balance?: number;
+}
+
+/**
+ * Редактор уровней сохранил чанки. Клиент → сервер: {chunk_ids};
+ * сервер → остальные игроки: {chunk_ids, player_id, login}.
+ */
+export interface WorldEditPayload {
+  chunk_ids: string[];
+  player_id?: number;
+  login?: string;
 }
 
 /** Локальное событие WSClient: соединение закрыто (code 1008 — аккаунт уже в игре). */
@@ -208,6 +224,7 @@ export interface PacketMap {
   PONG: Record<string, never>;
   WELCOME: WelcomePayload;
   PLAYER_JOIN: PlayerJoinPayload;
+  WORLD_EDIT: WorldEditPayload;
   CONNECTION_CLOSED: ConnectionClosedPayload;
 }
 

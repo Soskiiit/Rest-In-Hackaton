@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gorilla/websocket"
 	"hackaton/server/internal/db"
@@ -93,6 +94,14 @@ type aiDone struct {
 	text     string
 	fallback bool
 }
+type worldRequest struct {
+	updates  map[string]db.WorldChunk
+	response chan worldResponse
+}
+type worldResponse struct {
+	chunks map[string]db.WorldChunk
+	err    error
+}
 type aiPartial struct {
 	scene    db.Scene
 	c        *client
@@ -118,10 +127,69 @@ type Hub struct {
 
 func New(s *db.Store, w *game.World, c *game.Catalog, ai *game.AI) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &Hub{store: s, world: w, catalog: c, ai: ai, events: make(chan any, 512), stop: make(chan struct{}), done: make(chan struct{}), ctx: ctx, cancel: cancel, clients: map[int64]*client{}}
+	h := &Hub{store: s, world: w, catalog: w.PlaceCatalog(c), ai: ai, events: make(chan any, 512), stop: make(chan struct{}), done: make(chan struct{}), ctx: ctx, cancel: cancel, clients: map[int64]*client{}}
 	go h.run()
 	return h
 }
+
+// World serializes snapshots and edits with all game events.
+func (h *Hub) World(ctx context.Context, updates map[string]db.WorldChunk) (map[string]db.WorldChunk, error) {
+	reply := make(chan worldResponse, 1)
+	select {
+	case h.events <- worldRequest{updates: updates, response: reply}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-h.done:
+		return nil, errors.New("hub closed")
+	}
+	select {
+	case result := <-reply:
+		return result.chunks, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-h.done:
+		return nil, errors.New("hub closed")
+	}
+}
+func (h *Hub) worldRequest(e worldRequest) {
+	if e.updates != nil {
+		if len(e.updates) == 0 || len(e.updates) > len(h.world.Chunks) {
+			e.response <- worldResponse{err: errors.New("invalid world edit")}
+			return
+		}
+		raw := make(map[string]json.RawMessage, len(e.updates))
+		for id, u := range e.updates {
+			if u.Revision < 1 || h.world.Revisions[id] != u.Revision {
+				e.response <- worldResponse{err: db.ErrWorldConflict}
+				return
+			}
+			raw[id] = u.Data
+		}
+		candidate, err := h.world.Updated(raw, h.catalog)
+		if err != nil {
+			e.response <- worldResponse{err: err}
+			return
+		}
+		if err = h.store.SaveWorld(h.ctx, e.updates); err != nil {
+			e.response <- worldResponse{err: err}
+			return
+		}
+		ids := make([]string, 0, len(e.updates))
+		for id := range e.updates {
+			candidate.Revisions[id]++
+			ids = append(ids, id)
+		}
+		h.world = candidate
+		h.applyWorldEdit(ids)
+	}
+	result := make(map[string]db.WorldChunk, len(h.world.Chunks))
+	for id, chunk := range h.world.Chunks {
+		raw, _ := json.Marshal(chunk)
+		result[id] = db.WorldChunk{Data: raw, Revision: h.world.Revisions[id]}
+	}
+	e.response <- worldResponse{chunks: result}
+}
+
 func (h *Hub) Attach(conn *websocket.Conn, id int64, expires time.Time) {
 	accepted := make(chan struct{})
 	select {
@@ -158,6 +226,8 @@ func (h *Hub) run() {
 			}
 		case event := <-h.events:
 			switch e := event.(type) {
+			case worldRequest:
+				h.worldRequest(e)
 			case join:
 				h.add(e)
 			case leave:
@@ -334,7 +404,10 @@ func (h *Hub) stream(c *client) {
 	}
 	for _, id := range ids {
 		if !c.loaded[id] {
-			h.emit(c, "CHUNK_LOAD", h.world.Chunks[id])
+			h.emit(c, "CHUNK_LOAD", struct {
+				game.Chunk
+				Revision int64 `json:"revision"`
+			}{h.world.Chunks[id], h.world.Revisions[id]})
 		}
 	}
 	c.loaded = next
@@ -349,7 +422,7 @@ func (h *Hub) visibility() {
 			}
 			next[id] = true
 			if !c.visible[id] {
-				h.emit(c, "PLAYER_JOIN", other.player)
+				h.emit(c, "PLAYER_JOIN", publicPlayer(other.player))
 			}
 		}
 		for id := range c.visible {
@@ -359,6 +432,31 @@ func (h *Hub) visibility() {
 		}
 		c.visible = next
 	}
+}
+
+// applyWorldEdit moves NPCs and items to their new places and re-sends the changed chunks
+// to everyone who has them loaded, so nobody has to reconnect.
+func (h *Hub) applyWorldEdit(ids []string) {
+	h.catalog = h.world.PlaceCatalog(h.catalog)
+	for _, c := range h.clients {
+		stale := []string{}
+		for _, id := range ids {
+			if c.loaded[id] {
+				stale = append(stale, id)
+				delete(c.loaded, id)
+			}
+		}
+		if len(stale) > 0 {
+			h.emit(c, "CHUNK_UNLOAD", map[string]any{"chunk_ids": stale})
+		}
+		h.stream(c)
+		h.syncScenes(c)
+	}
+}
+
+// publicPlayer is what other players may see: the wallet stays private (BALANCE/WELCOME go to the owner only).
+func publicPlayer(p db.Player) map[string]any {
+	return map[string]any{"id": p.ID, "login": p.Login, "profile": p.Profile, "x": p.X, "z": p.Z, "rotation": p.Rotation}
 }
 func (h *Hub) handle(c *client, p Packet) {
 	if !time.Now().Before(c.expires) {
@@ -434,6 +532,36 @@ func (h *Hub) handle(c *client, p Packet) {
 		h.calculator(c, p.Payload)
 	case "INSPECT":
 		h.inspect(c, p.Payload)
+	case "WORLD_EDIT":
+		if h.world.Revisions != nil {
+			h.fail(c, "INVALID_WORLD_EDIT")
+			return
+		}
+		// The level editor saved these chunk files; tell everyone else to reload them.
+		var v struct {
+			ChunkIDs []string `json:"chunk_ids"`
+		}
+		if Decode(p.Payload, &v) != nil || len(v.ChunkIDs) == 0 || len(v.ChunkIDs) > len(h.world.Chunks) {
+			h.fail(c, "INVALID_WORLD_EDIT")
+			return
+		}
+		for _, id := range v.ChunkIDs {
+			if _, ok := h.world.Chunks[id]; !ok {
+				h.fail(c, "INVALID_WORLD_EDIT")
+				return
+			}
+		}
+		if err := h.world.Reload(v.ChunkIDs, h.catalog); err != nil {
+			log.Printf("WORLD_EDIT from %s rejected: %v", c.player.Login, err)
+			h.fail(c, "INVALID_WORLD_EDIT")
+			return
+		}
+		h.applyWorldEdit(v.ChunkIDs)
+		for _, other := range h.clients {
+			if other != c {
+				h.emit(other, "WORLD_EDIT", map[string]any{"chunk_ids": v.ChunkIDs, "player_id": c.player.ID, "login": c.player.Login})
+			}
+		}
 	default:
 		h.fail(c, "UNKNOWN_PACKET")
 	}
